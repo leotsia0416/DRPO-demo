@@ -110,7 +110,7 @@
     }
 
     .viewport::before {
-      content: "current remask window";
+      content: "current decoding block";
       position: absolute;
       top: -1px;
       right: 18px;
@@ -144,6 +144,7 @@
       font-style: italic;
     }
 
+    .decode-block,
     .window-frame {
       display: inline;
       border: 3px solid #111;
@@ -278,6 +279,14 @@
       vertical-align: 0.04em;
     }
 
+    .remask-window {
+      background: rgba(255, 245, 190, 0.65);
+      border-radius: 10px;
+      padding: 0.04em 0.18em;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+
     .fade-in {
       animation: fadeSlide 260ms ease both;
     }
@@ -342,12 +351,17 @@
           </div>
           <div class="dots" data-dots aria-hidden="true"></div>
         </div>
-        <p class="note">The black frame marks the active remask window. When a replacement happens, the old token stays visible with strike-through and the regenerated token appears in green.</p>
+        <p class="note">The black frame marks the current decoding block. During remask, the old token stays visible with strike-through, the masked position is shown as <span class="mask">MASK</span>, and the regenerated token appears in green.</p>
       </article>
     </section>
   </main>
   <script>
     const empty = "<span class=\"empty-token\">0 generated tokens</span>";
+    const d = (text) => `<span class="decode-block">${text}</span>`;
+    const oldToken = (text) => `<span class="old">${text}</span>`;
+    const newToken = (text) => `<span class="new">${text}</span>`;
+    const maskToken = "<span class=\"mask\">MASK</span>";
+
     const intro1 = "To solve the problem, we need to determine";
     const intro2 = `${intro1} the number of boxes that contain neither pens nor pencils.`;
     const intro3 = `${intro2} We start by using the principle of inclusion-exclusion`;
@@ -367,12 +381,6 @@
     const nextFind4 = `${nextFind3} that contain either pens or pencils`;
     const nextFind5 = `${nextFind4} from the total number of boxes`;
     const nextFind6 = `${nextFind5} to find the number of boxes that contain neither pens nor pencils.`;
-    const beforeWindow = `${calc4}\n\nNext, we <span class=\"window-frame\">find the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
-    const maskedWindow = `${calc4}\n\nNext, we <span class=\"window-frame\"><span class=\"mask\">MASK</span> the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
-    const regeneratedWindow = `${calc4}\n\nNext, we <span class=\"window-frame\"><span class=\"old\">find</span> <span class=\"new\">subtract</span> the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
-    const committedEdit = `${calc4}\n\nNext, we <span class=\"window-frame\">subtract the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
-    const stableMask = `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or <span class=\"window-frame\"><span class=\"old\">pencils</span> <span class=\"mask\">MASK</span></span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
-    const stableUnmask = `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or <span class=\"window-frame\"><span class=\"old\">pencils</span> <span class=\"new\">pencils</span></span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
     const afterRemask = `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
     const final1 = `${afterRemask}\n\nNumber with neither pens nor pencils`;
     const final2 = `${final1} = 10 - 7`;
@@ -382,37 +390,55 @@
 
     const steps = [
       { title: "Step 00 / Empty answer", focus: empty },
-      { title: "Step 01 / Decode begins", focus: intro1 },
-      { title: "Step 02 / Goal sentence completes", focus: intro2 },
-      { title: "Step 03 / Method starts", focus: intro3 },
-      { title: "Step 04 / Method completes", focus: intro4 },
-      { title: "Step 05 / Facts header", focus: facts1 },
-      { title: "Step 06 / Total boxes fact", focus: facts2 },
-      { title: "Step 07 / Pencils fact", focus: facts3 },
-      { title: "Step 08 / Pens fact", focus: facts4 },
-      { title: "Step 09 / Overlap fact", focus: facts5 },
-      { title: "Step 10 / Inclusion-exclusion line", focus: calc1 },
-      { title: "Step 11 / Add visible counts", focus: calc2 },
-      { title: "Step 12 / Subtract overlap", focus: calc3 },
-      { title: "Step 13 / Covered boxes = 7", focus: calc4 },
-      { title: "Step 14 / Next sentence starts", focus: nextFind1 },
-      { title: "Step 15 / Wrong operation appears", focus: nextFind2 },
-      { title: "Step 16 / Wrong operation continues", focus: nextFind3 },
-      { title: "Step 17 / Window candidate grows", focus: nextFind4 },
-      { title: "Step 18 / Pre-remask sentence", focus: nextFind5 },
-      { title: "Step 19 / Pre-remask complete", focus: nextFind6 },
-      { title: "Step 20 / Remask phase 1: window selected", focus: beforeWindow },
-      { title: "Step 21 / Remask phase 2: token removed", focus: maskedWindow },
-      { title: "Step 22 / Remask phase 3: regenerated token", focus: regeneratedWindow },
-      { title: "Step 23 / Remask phase 4: edit committed", focus: committedEdit },
-      { title: "Step 24 / Nearby check: remask probe", focus: stableMask },
-      { title: "Step 25 / Nearby check: token restored", focus: stableUnmask },
-      { title: "Step 26 / Reasoning path continues", focus: afterRemask },
-      { title: "Step 27 / Final computation starts", focus: final1 },
-      { title: "Step 28 / Subtract covered boxes", focus: final2 },
-      { title: "Step 29 / Result computed", focus: final3 },
-      { title: "Step 30 / Final answer phrase", focus: final4 },
-      { title: "Step 31 / Final boxed answer", focus: final5 },
+      { title: "Step 01 / Decode block", focus: d(intro1) },
+      { title: "Step 02 / Decode block", focus: `${intro1} ${d("the number of boxes that contain neither pens nor pencils.")}` },
+      { title: "Step 03 / Decode block", focus: `${intro2} ${d("We start by using the principle of inclusion-exclusion")}` },
+      { title: "Step 04 / Decode block", focus: `${intro3} ${d("to find the total number of boxes that contain either pens or pencils.")}` },
+      { title: "Step 05 / Decode block", focus: `${intro4}\n\n${d("Given:")}` },
+      { title: "Step 06 / Decode block", focus: `${facts1}\n${d("- Total number of boxes: 10")}` },
+      { title: "Step 07 / Decode block", focus: `${facts2}\n${d("- Boxes containing pencils: 5")}` },
+      { title: "Step 08 / Decode block", focus: `${facts3}\n${d("- Boxes containing pens: 4")}` },
+      { title: "Step 09 / Decode block", focus: `${facts4}\n${d("- Boxes containing both pens and pencils: 2")}` },
+      { title: "Step 10 / Decode block", focus: `${facts5}\n\n${d("First, we calculate the number of boxes that contain either pens or pencils:")}` },
+      { title: "Step 11 / Decode block", focus: `${calc1}\n\n${d("Number with either pens or pencils = 5 + 4")}` },
+      { title: "Step 12 / Decode block", focus: `${calc2} ${d("- 2")}` },
+      { title: "Step 13 / Decode block", focus: `${calc3} ${d("= 7")}` },
+      { title: "Step 14 / Decode block", focus: `${calc4}\n\n${d("Next, we")}` },
+      { title: "Step 15 / Decode block: wrong operation", focus: `${nextFind1} ${d("find")}` },
+      { title: "Step 16 / Decode block", focus: `${nextFind2} ${d("the number of boxes")}` },
+      { title: "Step 17 / Decode block", focus: `${nextFind3} ${d("that contain either pens or pencils")}` },
+      { title: "Step 18 / Decode block", focus: `${nextFind4} ${d("from the total number of boxes")}` },
+      { title: "Step 19 / Decode block", focus: `${nextFind5} ${d("to find the number of boxes that contain neither pens nor pencils.")}` },
+      {
+        title: "Step 20 / Remask phase 1: target chosen",
+        focus: `${calc4}\n\nNext, we <span class="remask-window">${d("find")} the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
+      },
+      {
+        title: "Step 21 / Remask phase 2: replace with MASK",
+        focus: `${calc4}\n\nNext, we <span class="remask-window">${oldToken("find")} ${d(maskToken)} the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
+      },
+      {
+        title: "Step 22 / Remask phase 3: decode MASK",
+        focus: `${calc4}\n\nNext, we <span class="remask-window">${oldToken("find")} ${d(newToken("subtract"))} the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
+      },
+      {
+        title: "Step 23 / Remask phase 4: commit edit",
+        focus: `${calc4}\n\nNext, we <span class="remask-window">${d("subtract")} the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
+      },
+      {
+        title: "Step 24 / Stable remask probe: MASK",
+        focus: `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or <span class="remask-window">${oldToken("pencils")} ${d(maskToken)}</span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
+      },
+      {
+        title: "Step 25 / Stable remask probe: restored",
+        focus: `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or <span class="remask-window">${oldToken("pencils")} ${d(newToken("pencils"))}</span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
+      },
+      { title: "Step 26 / Decode block", focus: `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.` },
+      { title: "Step 27 / Decode block", focus: `${afterRemask}\n\n${d("Number with neither pens nor pencils")}` },
+      { title: "Step 28 / Decode block", focus: `${final1} ${d("= 10 - 7")}` },
+      { title: "Step 29 / Decode block", focus: `${final2} ${d("= 3")}` },
+      { title: "Step 30 / Decode block", focus: `${final3}\n\n${d("Thus, the number of boxes that contain neither pens nor pencils is:")}` },
+      { title: "Step 31 / Decode block", focus: `${final4} ${d("$$ \\boxed{3} $$")}` },
     ];
 
     const player = document.querySelector("[data-remask-player]");
