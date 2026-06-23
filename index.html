@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DRPO Remasking Trace Demo</title>
+  <style>
+    :root {
+      --bg: #f6f1e8;
+      --ink: #26231f;
+      --muted: #736b60;
+      --card: #fffaf1;
+      --line: #ded2bf;
+      --old-bg: #f7d8d5;
+      --old-ink: #8d312b;
+      --new-bg: #c9f2ce;
+      --new-ink: #155b25;
+      --mask-bg: #efe4ff;
+      --mask-ink: #5c3f8d;
+      --window-bg: rgba(255, 255, 255, 0.38);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 14% 8%, rgba(255, 206, 146, 0.35), transparent 30rem),
+        radial-gradient(circle at 86% 16%, rgba(145, 190, 255, 0.25), transparent 28rem),
+        var(--bg);
+      color: var(--ink);
+      font-family: ui-serif, Georgia, "Times New Roman", serif;
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(980px, calc(100vw - 32px));
+      margin: 44px auto;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+    }
+
+    .subtitle {
+      margin: 0 0 28px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: color-mix(in srgb, var(--card) 92%, white);
+      box-shadow: 0 18px 40px rgba(76, 54, 32, 0.08);
+      padding: 22px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font: 13px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: rgba(255, 255, 255, 0.42);
+    }
+
+    .sentence {
+      margin: 0;
+      font-size: clamp(21px, 3vw, 31px);
+      line-height: 1.5;
+    }
+
+    .player {
+      display: grid;
+      gap: 18px;
+    }
+
+    .viewport {
+      position: relative;
+      min-height: 360px;
+      max-height: 62vh;
+      overflow: auto;
+      border: 2px solid #171717;
+      border-radius: 20px;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.28)),
+        var(--window-bg);
+      padding: 22px;
+    }
+
+    .viewport::before {
+      content: "current remask window";
+      position: absolute;
+      top: -1px;
+      right: 18px;
+      transform: translateY(-50%);
+      border: 2px solid #171717;
+      border-radius: 999px;
+      background: var(--card);
+      color: #171717;
+      padding: 4px 10px;
+      font: 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .context-line {
+      margin: 0;
+      color: color-mix(in srgb, var(--ink) 52%, white);
+      font-size: 14px;
+    }
+
+    .focus-line {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.72;
+      letter-spacing: 0;
+      white-space: pre-wrap;
+    }
+
+    .empty-token {
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    .window-frame {
+      display: inline;
+      border: 3px solid #111;
+      border-radius: 12px;
+      padding: 0.06em 0.16em 0.12em;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+      background: rgba(255, 255, 255, 0.55);
+      box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.05);
+    }
+
+    .player-status {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .step-title {
+      margin: 0;
+      color: var(--muted);
+      font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid #171717;
+      border-radius: 999px;
+      background: #171717;
+      color: #fffaf1;
+      cursor: pointer;
+      font: 700 14px/1 ui-sans-serif, system-ui, sans-serif;
+      padding: 11px 16px;
+      transition: transform 150ms ease, background 150ms ease;
+    }
+
+    button.secondary {
+      background: transparent;
+      color: #171717;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    .dots {
+      display: flex;
+      gap: 7px;
+      margin-top: -4px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--line);
+    }
+
+    .dot.active {
+      background: #171717;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+      margin-top: 26px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 16px;
+      align-items: start;
+      border-top: 1px dashed var(--line);
+      padding-top: 16px;
+    }
+
+    .step-label {
+      color: var(--muted);
+      font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .step-text {
+      margin: 0;
+      font-size: clamp(18px, 2.4vw, 25px);
+      line-height: 1.55;
+    }
+
+    .step-text code {
+      white-space: pre-wrap;
+      font: inherit;
+    }
+
+    .old {
+      color: var(--old-ink);
+      background: var(--old-bg);
+      border-radius: 8px;
+      padding: 0.04em 0.18em;
+      text-decoration: line-through;
+      text-decoration-thickness: 0.11em;
+      text-decoration-color: color-mix(in srgb, var(--old-ink) 78%, black);
+    }
+
+    .new {
+      color: var(--new-ink);
+      background: var(--new-bg);
+      border-radius: 8px;
+      padding: 0.04em 0.22em;
+      box-shadow: inset 0 -0.12em 0 rgba(21, 91, 37, 0.16);
+      font-weight: 700;
+    }
+
+    .mask {
+      color: var(--mask-ink);
+      background: var(--mask-bg);
+      border-radius: 8px;
+      padding: 0.04em 0.2em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.78em;
+      vertical-align: 0.04em;
+    }
+
+    .fade-in {
+      animation: fadeSlide 260ms ease both;
+    }
+
+    @keyframes fadeSlide {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .note {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    @media (max-width: 640px) {
+      main {
+        margin: 26px auto;
+      }
+
+      .card {
+        padding: 18px;
+        border-radius: 18px;
+      }
+
+      .step {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>One remask trace, from the start</h1>
+    <p class="subtitle">Sample math-500_404: click through generation from the first reasoning sentence to the remask window and final answer.</p>
+
+    <section class="grid" aria-label="Remask trace for math-500_404">
+      <article class="card">
+        <div class="meta">
+          <span class="pill">math-500_404</span>
+          <span class="pill">correct</span>
+          <span class="pill">score 0.509</span>
+          <span class="pill">window 316..328</span>
+        </div>
+        <div class="player" data-remask-player>
+          <div class="player-status">
+            <p class="step-title" data-step-title>Step 1</p>
+            <div class="controls">
+              <button type="button" class="secondary" data-prev-step>Back</button>
+              <button type="button" data-next-step>Next step</button>
+            </div>
+          </div>
+      <div class="viewport" aria-live="polite">
+            <p class="focus-line fade-in" data-focus-line></p>
+          </div>
+          <div class="dots" data-dots aria-hidden="true"></div>
+        </div>
+        <p class="note">The black frame marks the active remask window. When a replacement happens, the old token stays visible with strike-through and the regenerated token appears in green.</p>
+      </article>
+    </section>
+  </main>
+  <script>
+    const steps = [
+      {
+        title: "Step 0 / Empty answer",
+        focus: "<span class=\"empty-token\">0 generated tokens</span>",
+      },
+      {
+        title: "Step 1 / First sentence generated",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils.",
+      },
+      {
+        title: "Step 2 / Inclusion-exclusion setup",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.",
+      },
+      {
+        title: "Step 3 / Facts generated",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2",
+      },
+      {
+        title: "Step 4 / Covered boxes computed",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7",
+      },
+      {
+        title: "Step 5 / Before remask",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we find the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
+      },
+      {
+        title: "Step 6 / Window selected",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we <span class=\"window-frame\">find the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
+      },
+      {
+        title: "Step 7 / Remask inside the window",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we <span class=\"window-frame\"><span class=\"mask\">MASK</span> the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
+      },
+      {
+        title: "Step 8 / Unmask changes the operation",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we <span class=\"window-frame\"><span class=\"old\">find</span> <span class=\"new\">subtract</span> the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
+      },
+      {
+        title: "Step 9 / Nearby stable remask",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we subtract the number of boxes that contain either pens or <span class=\"window-frame\"><span class=\"old\">pencils</span> <span class=\"mask\">MASK</span></span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
+      },
+      {
+        title: "Step 10 / Stable unmask returns original token",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we subtract the number of boxes that contain either pens or <span class=\"window-frame\"><span class=\"old\">pencils</span> <span class=\"new\">pencils</span></span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
+      },
+      {
+        title: "Step 11 / Final computation generated",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we subtract the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.\n\nNumber with neither pens nor pencils = 10 - 7 = 3",
+      },
+      {
+        title: "Step 12 / Final answer",
+        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we subtract the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.\n\nNumber with neither pens nor pencils = 10 - 7 = 3\n\nThus, the number of boxes that contain neither pens nor pencils is: $$ \\boxed{3} $$",
+      },
+    ];
+
+    const player = document.querySelector("[data-remask-player]");
+    const title = player.querySelector("[data-step-title]");
+    const viewport = player.querySelector(".viewport");
+    const focus = player.querySelector("[data-focus-line]");
+    const dots = player.querySelector("[data-dots]");
+    const prevButton = player.querySelector("[data-prev-step]");
+    const nextButton = player.querySelector("[data-next-step]");
+    let stepIndex = 0;
+
+    steps.forEach((_, index) => {
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      dot.dataset.index = String(index);
+      dots.appendChild(dot);
+    });
+
+    function renderStep() {
+      const step = steps[stepIndex];
+      title.textContent = step.title;
+      focus.innerHTML = step.focus;
+      focus.classList.remove("fade-in");
+      void focus.offsetWidth;
+      focus.classList.add("fade-in");
+      viewport.scrollTop = viewport.scrollHeight;
+      dots.querySelectorAll(".dot").forEach((dot, index) => {
+        dot.classList.toggle("active", index === stepIndex);
+      });
+      prevButton.disabled = stepIndex === 0;
+      nextButton.textContent = stepIndex === steps.length - 1 ? "Restart" : "Next step";
+    }
+
+    prevButton.addEventListener("click", () => {
+      stepIndex = Math.max(0, stepIndex - 1);
+      renderStep();
+    });
+
+    nextButton.addEventListener("click", () => {
+      stepIndex = stepIndex === steps.length - 1 ? 0 : stepIndex + 1;
+      renderStep();
+    });
+
+    dots.addEventListener("click", (event) => {
+      if (!event.target.matches(".dot")) return;
+      stepIndex = Number(event.target.dataset.index);
+      renderStep();
+    });
+
+    renderStep();
+  </script>
+</body>
+</html>
