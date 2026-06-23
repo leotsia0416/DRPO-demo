@@ -199,15 +199,17 @@
 
     .dots {
       display: flex;
+      flex-wrap: wrap;
       gap: 7px;
       margin-top: -4px;
     }
 
     .dot {
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
       border-radius: 999px;
       background: var(--line);
+      cursor: pointer;
     }
 
     .dot.active {
@@ -345,59 +347,72 @@
     </section>
   </main>
   <script>
+    const empty = "<span class=\"empty-token\">0 generated tokens</span>";
+    const intro1 = "To solve the problem, we need to determine";
+    const intro2 = `${intro1} the number of boxes that contain neither pens nor pencils.`;
+    const intro3 = `${intro2} We start by using the principle of inclusion-exclusion`;
+    const intro4 = `${intro3} to find the total number of boxes that contain either pens or pencils.`;
+    const facts1 = `${intro4}\n\nGiven:`;
+    const facts2 = `${facts1}\n- Total number of boxes: 10`;
+    const facts3 = `${facts2}\n- Boxes containing pencils: 5`;
+    const facts4 = `${facts3}\n- Boxes containing pens: 4`;
+    const facts5 = `${facts4}\n- Boxes containing both pens and pencils: 2`;
+    const calc1 = `${facts5}\n\nFirst, we calculate the number of boxes that contain either pens or pencils:`;
+    const calc2 = `${calc1}\n\nNumber with either pens or pencils = 5 + 4`;
+    const calc3 = `${calc2} - 2`;
+    const calc4 = `${calc3} = 7`;
+    const nextFind1 = `${calc4}\n\nNext, we`;
+    const nextFind2 = `${nextFind1} find`;
+    const nextFind3 = `${nextFind2} the number of boxes`;
+    const nextFind4 = `${nextFind3} that contain either pens or pencils`;
+    const nextFind5 = `${nextFind4} from the total number of boxes`;
+    const nextFind6 = `${nextFind5} to find the number of boxes that contain neither pens nor pencils.`;
+    const beforeWindow = `${calc4}\n\nNext, we <span class=\"window-frame\">find the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
+    const maskedWindow = `${calc4}\n\nNext, we <span class=\"window-frame\"><span class=\"mask\">MASK</span> the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
+    const regeneratedWindow = `${calc4}\n\nNext, we <span class=\"window-frame\"><span class=\"old\">find</span> <span class=\"new\">subtract</span> the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
+    const committedEdit = `${calc4}\n\nNext, we <span class=\"window-frame\">subtract the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
+    const stableMask = `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or <span class=\"window-frame\"><span class=\"old\">pencils</span> <span class=\"mask\">MASK</span></span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
+    const stableUnmask = `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or <span class=\"window-frame\"><span class=\"old\">pencils</span> <span class=\"new\">pencils</span></span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
+    const afterRemask = `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
+    const final1 = `${afterRemask}\n\nNumber with neither pens nor pencils`;
+    const final2 = `${final1} = 10 - 7`;
+    const final3 = `${final2} = 3`;
+    const final4 = `${final3}\n\nThus, the number of boxes that contain neither pens nor pencils is:`;
+    const final5 = `${final4} $$ \\boxed{3} $$`;
+
     const steps = [
-      {
-        title: "Step 0 / Empty answer",
-        focus: "<span class=\"empty-token\">0 generated tokens</span>",
-      },
-      {
-        title: "Step 1 / First sentence generated",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils.",
-      },
-      {
-        title: "Step 2 / Inclusion-exclusion setup",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.",
-      },
-      {
-        title: "Step 3 / Facts generated",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2",
-      },
-      {
-        title: "Step 4 / Covered boxes computed",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7",
-      },
-      {
-        title: "Step 5 / Before remask",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we find the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
-      },
-      {
-        title: "Step 6 / Window selected",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we <span class=\"window-frame\">find the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
-      },
-      {
-        title: "Step 7 / Remask inside the window",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we <span class=\"window-frame\"><span class=\"mask\">MASK</span> the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
-      },
-      {
-        title: "Step 8 / Unmask changes the operation",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we <span class=\"window-frame\"><span class=\"old\">find</span> <span class=\"new\">subtract</span> the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
-      },
-      {
-        title: "Step 9 / Nearby stable remask",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we subtract the number of boxes that contain either pens or <span class=\"window-frame\"><span class=\"old\">pencils</span> <span class=\"mask\">MASK</span></span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
-      },
-      {
-        title: "Step 10 / Stable unmask returns original token",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we subtract the number of boxes that contain either pens or <span class=\"window-frame\"><span class=\"old\">pencils</span> <span class=\"new\">pencils</span></span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.",
-      },
-      {
-        title: "Step 11 / Final computation generated",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we subtract the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.\n\nNumber with neither pens nor pencils = 10 - 7 = 3",
-      },
-      {
-        title: "Step 12 / Final answer",
-        focus: "To solve the problem, we need to determine the number of boxes that contain neither pens nor pencils. We start by using the principle of inclusion-exclusion to find the total number of boxes that contain either pens or pencils.\n\nGiven:\n- Total number of boxes: 10\n- Boxes containing pencils: 5\n- Boxes containing pens: 4\n- Boxes containing both pens and pencils: 2\n\nFirst, we calculate the number of boxes that contain either pens or pencils:\n\nNumber with either pens or pencils = 5 + 4 - 2 = 7\n\nNext, we subtract the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.\n\nNumber with neither pens nor pencils = 10 - 7 = 3\n\nThus, the number of boxes that contain neither pens nor pencils is: $$ \\boxed{3} $$",
-      },
+      { title: "Step 00 / Empty answer", focus: empty },
+      { title: "Step 01 / Decode begins", focus: intro1 },
+      { title: "Step 02 / Goal sentence completes", focus: intro2 },
+      { title: "Step 03 / Method starts", focus: intro3 },
+      { title: "Step 04 / Method completes", focus: intro4 },
+      { title: "Step 05 / Facts header", focus: facts1 },
+      { title: "Step 06 / Total boxes fact", focus: facts2 },
+      { title: "Step 07 / Pencils fact", focus: facts3 },
+      { title: "Step 08 / Pens fact", focus: facts4 },
+      { title: "Step 09 / Overlap fact", focus: facts5 },
+      { title: "Step 10 / Inclusion-exclusion line", focus: calc1 },
+      { title: "Step 11 / Add visible counts", focus: calc2 },
+      { title: "Step 12 / Subtract overlap", focus: calc3 },
+      { title: "Step 13 / Covered boxes = 7", focus: calc4 },
+      { title: "Step 14 / Next sentence starts", focus: nextFind1 },
+      { title: "Step 15 / Wrong operation appears", focus: nextFind2 },
+      { title: "Step 16 / Wrong operation continues", focus: nextFind3 },
+      { title: "Step 17 / Window candidate grows", focus: nextFind4 },
+      { title: "Step 18 / Pre-remask sentence", focus: nextFind5 },
+      { title: "Step 19 / Pre-remask complete", focus: nextFind6 },
+      { title: "Step 20 / Remask phase 1: window selected", focus: beforeWindow },
+      { title: "Step 21 / Remask phase 2: token removed", focus: maskedWindow },
+      { title: "Step 22 / Remask phase 3: regenerated token", focus: regeneratedWindow },
+      { title: "Step 23 / Remask phase 4: edit committed", focus: committedEdit },
+      { title: "Step 24 / Nearby check: remask probe", focus: stableMask },
+      { title: "Step 25 / Nearby check: token restored", focus: stableUnmask },
+      { title: "Step 26 / Reasoning path continues", focus: afterRemask },
+      { title: "Step 27 / Final computation starts", focus: final1 },
+      { title: "Step 28 / Subtract covered boxes", focus: final2 },
+      { title: "Step 29 / Result computed", focus: final3 },
+      { title: "Step 30 / Final answer phrase", focus: final4 },
+      { title: "Step 31 / Final boxed answer", focus: final5 },
     ];
 
     const player = document.querySelector("[data-remask-player]");
