@@ -361,6 +361,7 @@
     const newToken = (text) => `<span class="new">${text}</span>`;
     const maskToken = "<span class=\"mask\">MASK</span>";
 
+    // Each decode block below is capped at 4 visible tokens, matching block_size=4.
     const chunks = [
       "To solve the problem,",
       " we need to determine",
@@ -374,8 +375,8 @@
       " contain either pens or",
       " pencils.",
       "\n\nGiven:",
-      "\n- Total number of boxes:",
-      " 10",
+      "\n- Total number of",
+      " boxes: 10",
       "\n- Boxes containing pencils:",
       " 5",
       "\n- Boxes containing pens:",
@@ -401,21 +402,33 @@
       " neither pens nor pencils.",
     ];
 
+    const countVisibleTokens = (text) => text.trim().split(/\s+/).filter(Boolean).length;
+    const tooLarge = chunks
+      .map((text, index) => [index + 1, text, countVisibleTokens(text)])
+      .filter(([, , count]) => count > 4);
+    if (tooLarge.length) {
+      console.warn("Decode chunks exceed block_size=4", tooLarge);
+    }
+
     const cumulative = (count) => chunks.slice(0, count).join("");
     const stepFocus = (index) => `${cumulative(index)}${d(chunks[index])}`;
     const calc4 = cumulative(28);
-    const wrongSentence = cumulative(37);
     const afterRemask = `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
-    const final1 = `${afterRemask}\n\nNumber with neither pens nor pencils`;
-    const final2 = `${final1} = 10 - 7`;
-    const final3 = `${final2} = 3`;
-    const final4 = `${final3}\n\nThus, the number of boxes that contain neither pens nor pencils is:`;
-    const final5 = `${final4} $$ \\boxed{3} $$`;
+    const finalChunks = [
+      "\n\nNumber with neither pens",
+      " nor pencils = 10",
+      " - 7 = 3",
+      "\n\nThus, the number of",
+      " boxes that contain neither",
+      " pens nor pencils is:",
+      " $$ \\boxed{3} $$",
+    ];
+    const finalPrefix = (count) => afterRemask + finalChunks.slice(0, count).join("");
 
     const steps = [
       { title: "Step 00 / Empty answer", focus: empty },
       ...chunks.map((_, index) => ({
-        title: `Step ${String(index + 1).padStart(2, "0")} / Decode block ~4 tokens`,
+        title: `Step ${String(index + 1).padStart(2, "0")} / Decode block ${countVisibleTokens(chunks[index])}/4`,
         focus: stepFocus(index),
       })),
       {
@@ -442,14 +455,10 @@
         title: "Step 43 / Stable remask probe: restored",
         focus: `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or <span class="remask-window">${oldToken("pencils")} ${d(newToken("pencils"))}</span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
       },
-      { title: "Step 44 / Decode block ~4 tokens", focus: `${afterRemask}\n\n${d("Number with neither pens")}` },
-      { title: "Step 45 / Decode block ~4 tokens", focus: `${afterRemask}\n\nNumber with neither pens ${d("nor pencils")}` },
-      { title: "Step 46 / Decode block ~4 tokens", focus: `${final1} ${d("= 10 - 7")}` },
-      { title: "Step 47 / Decode block ~4 tokens", focus: `${final2} ${d("= 3")}` },
-      { title: "Step 48 / Decode block ~4 tokens", focus: `${final3}\n\n${d("Thus, the number of")}` },
-      { title: "Step 49 / Decode block ~4 tokens", focus: `${final3}\n\nThus, the number of ${d("boxes that contain neither")}` },
-      { title: "Step 50 / Decode block ~4 tokens", focus: `${final3}\n\nThus, the number of boxes that contain neither ${d("pens nor pencils is:")}` },
-      { title: "Step 51 / Decode block", focus: `${final4} ${d("$$ \\boxed{3} $$")}` },
+      ...finalChunks.map((chunk, index) => ({
+        title: `Step ${String(44 + index).padStart(2, "0")} / Decode block ${countVisibleTokens(chunk)}/4`,
+        focus: `${finalPrefix(index)}${d(chunk)}`,
+      })),
     ];
 
     const player = document.querySelector("[data-remask-player]");
