@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import html
 import json
+from collections import defaultdict
 from pathlib import Path
 
 from transformers import AutoTokenizer
@@ -13,10 +14,16 @@ EVENT_TRACE = (
     REPO_ROOT
     / "outputs/math500_grpo90861_ckpt450_850_950_rt050_bs16_8gpu_20260614_160254/checkpoint-450/rt0_50/remask_event_trace.jsonl"
 )
-SOURCE_HTML = DEMO_ROOT / "index.html"
+VISUAL_CASES = REPO_ROOT / "outputs/remask_visual_cases/math500_ckpt450_rt050/math500_remask_visual_cases.json"
 TARGET_HTML = DEMO_ROOT / "index.html"
 LOCAL_COPY = REPO_ROOT / "outputs/remask_visual_cases/key_sentence_inline_edits.html"
-PROMPT_NEEDLE = "Roslyn has ten boxes"
+
+SELECTED_CASES = [
+    "math-500_404",  # find -> subtract
+    "math-500_33",   # 8-1 -> 7-1
+    "math-500_428",  # 1/3 -> 1/6
+    "math-500_444",  # x -> y
+]
 
 
 def decode(tokenizer, token_ids):
@@ -25,6 +32,10 @@ def decode(tokenizer, token_ids):
 
 def esc(text):
     return html.escape(text, quote=False).replace("&lt;|MASK|&gt;", '<span class="mask">MASK</span>')
+
+
+def prompt_key(record_input):
+    return json.dumps(record_input, ensure_ascii=False, sort_keys=True)
 
 
 def render_decode_block(tokenizer, token_ids, start, end):
@@ -70,8 +81,7 @@ def render_old_new_window(tokenizer, before_ids, after_ids, record):
 
     local_window_start = window_start - prompt_length
     local_window_end = window_end - prompt_length
-    local_positions = [pos - prompt_length for pos in positions]
-    local_pos = local_positions[0]
+    local_pos = positions[0] - prompt_length
 
     parts = [esc(decode(tokenizer, after_ids[:local_window_start])), '<span class="remask-window">']
     parts.append(esc(decode(tokenizer, after_ids[local_window_start:local_pos])))
@@ -87,19 +97,41 @@ def render_old_new_window(tokenizer, before_ids, after_ids, record):
     return "".join(parts)
 
 
-def load_records():
-    records = []
+def load_cases():
+    payload = json.loads(VISUAL_CASES.read_text(encoding="utf-8"))
+    cases = {case["example_abbr"]: case for case in payload["cases"]}
+    selected = [cases[name] for name in SELECTED_CASES if name in cases]
+    missing = [name for name in SELECTED_CASES if name not in cases]
+    if missing:
+        raise RuntimeError(f"Missing visual cases: {missing}")
+    return selected
+
+
+def prompt_needle(case):
+    base = case["prompt"].split(" Solve the problem step by step", 1)[0]
+    return " ".join(base.split())[:60]
+
+
+def load_records_by_prompt(cases):
+    needles = {case["example_abbr"]: prompt_needle(case) for case in cases}
+    prompt_to_records = defaultdict(list)
+    abbr_to_prompt = {}
     with EVENT_TRACE.open("r", encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
                 continue
             record = json.loads(line)
             prompt = (record.get("input") or [{}])[0].get("prompt", "")
-            if PROMPT_NEEDLE in prompt:
-                records.append(record)
-    if not records:
-        raise RuntimeError(f"No records found for prompt containing {PROMPT_NEEDLE!r}")
-    return records
+            normalized_prompt = " ".join(prompt.split())
+            prompt_to_records[prompt].append(record)
+            for abbr, needle in needles.items():
+                if needle and needle in normalized_prompt:
+                    abbr_to_prompt[abbr] = prompt
+
+    return {
+        abbr: prompt_to_records[prompt]
+        for abbr, prompt in abbr_to_prompt.items()
+    }
 
 
 def build_steps(tokenizer, records):
@@ -188,37 +220,377 @@ def build_steps(tokenizer, records):
     return steps
 
 
-def replace_steps(html_text, steps):
-    start = html_text.index("    const steps = ")
-    end = html_text.index('    const player = document.querySelector("[data-remask-player]");')
-    payload = json.dumps(steps, ensure_ascii=False, indent=6)
-    block = (
-        "    // Trace-driven steps generated from remask_event_trace.jsonl.\n"
-        "    // Decode blocks highlight the exact tokenizer-id delta between adjacent records.\n"
-        f"    const steps = {payload};\n\n"
-    )
-    return html_text[:start] + block + html_text[end:]
+def short_prompt(case):
+    prompt = case["prompt"].replace(" Solve the problem step by step", "\nSolve the problem step by step")
+    return prompt[:360] + ("..." if len(prompt) > 360 else "")
+
+
+def build_html(case_payloads):
+    data_json = json.dumps(case_payloads, ensure_ascii=False)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DRPO Remasking Trace Demo</title>
+  <style>
+    :root {{
+      --bg: #f6f1e8;
+      --ink: #26231f;
+      --muted: #736b60;
+      --card: #fffaf1;
+      --line: #ded2bf;
+      --old-bg: #f7d8d5;
+      --old-ink: #8d312b;
+      --new-bg: #c9f2ce;
+      --new-ink: #155b25;
+      --mask-bg: #efe4ff;
+      --mask-ink: #5c3f8d;
+      --window-bg: rgba(255, 255, 255, 0.38);
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background:
+        radial-gradient(circle at 14% 8%, rgba(255, 206, 146, 0.35), transparent 30rem),
+        radial-gradient(circle at 86% 16%, rgba(145, 190, 255, 0.25), transparent 28rem),
+        var(--bg);
+      color: var(--ink);
+      font-family: ui-serif, Georgia, "Times New Roman", serif;
+      line-height: 1.55;
+    }}
+    main {{
+      width: min(1180px, calc(100vw - 32px));
+      margin: 38px auto;
+    }}
+    h1 {{
+      margin: 0 0 8px;
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+    }}
+    .subtitle {{
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 18px;
+    }}
+    .tabs {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }}
+    .tab {{
+      appearance: none;
+      border: 1px solid #171717;
+      border-radius: 999px;
+      background: transparent;
+      color: #171717;
+      cursor: pointer;
+      font: 700 13px/1 ui-sans-serif, system-ui, sans-serif;
+      padding: 10px 13px;
+    }}
+    .tab.active {{
+      background: #171717;
+      color: #fffaf1;
+    }}
+    .card {{
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: color-mix(in srgb, var(--card) 92%, white);
+      box-shadow: 0 18px 40px rgba(76, 54, 32, 0.08);
+      padding: 22px;
+      margin-bottom: 18px;
+    }}
+    .case-card {{ display: none; }}
+    .case-card.active {{ display: block; }}
+    .meta {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font: 13px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }}
+    .pill {{
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: rgba(255, 255, 255, 0.42);
+    }}
+    .prompt {{
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 14px;
+      white-space: pre-wrap;
+    }}
+    .player {{ display: grid; gap: 18px; }}
+    .viewport {{
+      position: relative;
+      min-height: 360px;
+      max-height: 62vh;
+      overflow: auto;
+      border: 2px solid #171717;
+      border-radius: 20px;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.28)),
+        var(--window-bg);
+      padding: 44px 22px 22px;
+    }}
+    .viewport::before {{
+      content: "current decoding block";
+      position: absolute;
+      top: 12px;
+      right: 18px;
+      border: 2px solid #171717;
+      border-radius: 999px;
+      background: var(--card);
+      color: #171717;
+      padding: 4px 10px;
+      font: 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }}
+    .focus-line {{
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.72;
+      white-space: pre-wrap;
+    }}
+    .empty-token {{ color: var(--muted); font-style: italic; }}
+    .decode-block {{
+      display: inline;
+      border: 3px solid #111;
+      border-radius: 12px;
+      padding: 0.06em 0.16em 0.12em;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+      background: rgba(255, 255, 255, 0.55);
+      box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.05);
+    }}
+    .remask-window {{
+      background: rgba(255, 245, 190, 0.65);
+      border-radius: 10px;
+      padding: 0.04em 0.18em;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }}
+    .old {{
+      color: var(--old-ink);
+      background: var(--old-bg);
+      border-radius: 8px;
+      padding: 0.04em 0.18em;
+      text-decoration: line-through;
+      text-decoration-thickness: 0.11em;
+    }}
+    .new {{
+      color: var(--new-ink);
+      background: var(--new-bg);
+      border-radius: 8px;
+      padding: 0.04em 0.22em;
+      font-weight: 700;
+    }}
+    .mask {{
+      color: var(--mask-ink);
+      background: var(--mask-bg);
+      border-radius: 8px;
+      padding: 0.04em 0.2em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.78em;
+    }}
+    .player-status {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+    }}
+    .step-title {{
+      margin: 0;
+      color: var(--muted);
+      font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .controls {{ display: flex; gap: 10px; }}
+    .control-button {{
+      appearance: none;
+      border: 1px solid #171717;
+      border-radius: 999px;
+      background: #171717;
+      color: #fffaf1;
+      cursor: pointer;
+      font: 700 14px/1 ui-sans-serif, system-ui, sans-serif;
+      padding: 11px 16px;
+    }}
+    .control-button.secondary {{
+      background: transparent;
+      color: #171717;
+    }}
+    .dots {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: -4px;
+    }}
+    .dot {{
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--line);
+      cursor: pointer;
+    }}
+    .dot.active {{ background: #171717; }}
+    .note {{
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>DRPO Remasking Trace Demo</h1>
+    <p class="subtitle">Parallel examples from real tokenizer-block traces. Pick a sample to inspect decode blocks and remask phases.</p>
+    <div class="tabs" data-tabs></div>
+    <section data-cases></section>
+  </main>
+  <script>
+    const cases = {data_json};
+    const tabs = document.querySelector("[data-tabs]");
+    const caseRoot = document.querySelector("[data-cases]");
+    const states = new Map();
+
+    function makeButton(text, className = "control-button") {{
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = className;
+      button.textContent = text;
+      return button;
+    }}
+
+    function renderDots(card, steps, activeIndex) {{
+      const dots = card.querySelector("[data-dots]");
+      dots.textContent = "";
+      steps.forEach((_, index) => {{
+        const dot = document.createElement("span");
+        dot.className = index === activeIndex ? "dot active" : "dot";
+        dot.dataset.index = String(index);
+        dots.appendChild(dot);
+      }});
+    }}
+
+    function renderStep(card, caseData) {{
+      const index = states.get(caseData.id) ?? 0;
+      const step = caseData.steps[index];
+      card.querySelector("[data-step-title]").textContent = step.title;
+      const focus = card.querySelector("[data-focus-line]");
+      focus.innerHTML = step.focus;
+      const viewport = card.querySelector(".viewport");
+      viewport.scrollTop = viewport.scrollHeight;
+      renderDots(card, caseData.steps, index);
+      card.querySelector("[data-prev-step]").disabled = index === 0;
+      card.querySelector("[data-next-step]").textContent = index === caseData.steps.length - 1 ? "Restart" : "Next step";
+    }}
+
+    function activateCase(id) {{
+      document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.caseId === id));
+      document.querySelectorAll(".case-card").forEach((card) => card.classList.toggle("active", card.dataset.caseId === id));
+    }}
+
+    cases.forEach((caseData, caseIndex) => {{
+      states.set(caseData.id, 0);
+
+      const tab = makeButton(caseData.id, "tab");
+      tab.dataset.caseId = caseData.id;
+      tab.addEventListener("click", () => activateCase(caseData.id));
+      tabs.appendChild(tab);
+
+      const card = document.createElement("article");
+      card.className = "card case-card";
+      card.dataset.caseId = caseData.id;
+      card.innerHTML = `
+        <div class="meta">
+          <span class="pill">${{caseData.id}}</span>
+          <span class="pill">${{caseData.correct ? "correct" : "incorrect"}}</span>
+          <span class="pill">${{caseData.change}}</span>
+          <span class="pill">block ${{caseData.block}}</span>
+          <span class="pill">${{caseData.steps.length}} steps</span>
+        </div>
+        <p class="prompt">${{caseData.prompt}}</p>
+        <div class="player">
+          <div class="player-status">
+            <p class="step-title" data-step-title></p>
+            <div class="controls">
+              <button type="button" class="control-button secondary" data-prev-step>Back</button>
+              <button type="button" class="control-button" data-next-step>Next step</button>
+            </div>
+          </div>
+          <div class="viewport" aria-live="polite">
+            <p class="focus-line" data-focus-line></p>
+          </div>
+          <div class="dots" data-dots aria-hidden="true"></div>
+        </div>
+        <p class="note">Black frame = exact tokenizer block or remasked token from trace. Yellow background = remask window.</p>
+      `;
+      caseRoot.appendChild(card);
+
+      card.querySelector("[data-prev-step]").addEventListener("click", () => {{
+        states.set(caseData.id, Math.max(0, (states.get(caseData.id) ?? 0) - 1));
+        renderStep(card, caseData);
+      }});
+      card.querySelector("[data-next-step]").addEventListener("click", () => {{
+        const index = states.get(caseData.id) ?? 0;
+        states.set(caseData.id, index === caseData.steps.length - 1 ? 0 : index + 1);
+        renderStep(card, caseData);
+      }});
+      card.querySelector("[data-dots]").addEventListener("click", (event) => {{
+        if (!event.target.matches(".dot")) return;
+        states.set(caseData.id, Number(event.target.dataset.index));
+        renderStep(card, caseData);
+      }});
+      renderStep(card, caseData);
+
+      if (caseIndex === 0) activateCase(caseData.id);
+    }});
+  </script>
+</body>
+</html>
+"""
 
 
 def main():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
-    records = load_records()
-    steps = build_steps(tokenizer, records)
-    html_text = SOURCE_HTML.read_text(encoding="utf-8")
-    html_text = replace_steps(html_text, steps)
-    html_text = html_text.replace(
-        "Sample math-500_404: click through generation from the first reasoning sentence to the remask window and final answer.",
-        "Sample math-500_404: trace-driven playback from real tokenizer blocks and remask events.",
-    )
-    html_text = html_text.replace(
-        '<span class="pill">window 316..328</span>',
-        '<span class="pill">trace-driven</span><span class="pill">window 316..328</span>',
-    )
+    cases = load_cases()
+    records_by_prompt = load_records_by_prompt(cases)
+
+    payloads = []
+    for case in cases:
+        records = records_by_prompt.get(case["example_abbr"])
+        if not records:
+            raise RuntimeError(f"No event records for {case['example_abbr']}")
+        steps = build_steps(tokenizer, records)
+        payloads.append(
+            {
+                "id": case["example_abbr"],
+                "correct": bool(case["correct"]),
+                "block": case["block_idx"],
+                "change": f"{case['before_span']} → {case['after_span']}",
+                "prompt": short_prompt(case),
+                "steps": steps,
+            }
+        )
+
+    html_text = build_html(payloads)
     TARGET_HTML.write_text(html_text, encoding="utf-8")
     LOCAL_COPY.write_text(html_text, encoding="utf-8")
     print(f"wrote {TARGET_HTML}")
     print(f"wrote {LOCAL_COPY}")
-    print(f"steps={len(steps)} records={len(records)}")
+    for payload in payloads:
+        print(f"{payload['id']}: {len(payload['steps'])} steps")
 
 
 if __name__ == "__main__":
