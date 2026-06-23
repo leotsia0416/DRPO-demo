@@ -356,30 +356,55 @@
   </main>
   <script>
     const empty = "<span class=\"empty-token\">0 generated tokens</span>";
-    const d = (text) => `<span class="decode-block">${text}</span>`;
+    const d = (text) => `<span class="decode-block">${text.trimStart()}</span>`;
     const oldToken = (text) => `<span class="old">${text}</span>`;
     const newToken = (text) => `<span class="new">${text}</span>`;
     const maskToken = "<span class=\"mask\">MASK</span>";
 
-    const intro1 = "To solve the problem, we need to determine";
-    const intro2 = `${intro1} the number of boxes that contain neither pens nor pencils.`;
-    const intro3 = `${intro2} We start by using the principle of inclusion-exclusion`;
-    const intro4 = `${intro3} to find the total number of boxes that contain either pens or pencils.`;
-    const facts1 = `${intro4}\n\nGiven:`;
-    const facts2 = `${facts1}\n- Total number of boxes: 10`;
-    const facts3 = `${facts2}\n- Boxes containing pencils: 5`;
-    const facts4 = `${facts3}\n- Boxes containing pens: 4`;
-    const facts5 = `${facts4}\n- Boxes containing both pens and pencils: 2`;
-    const calc1 = `${facts5}\n\nFirst, we calculate the number of boxes that contain either pens or pencils:`;
-    const calc2 = `${calc1}\n\nNumber with either pens or pencils = 5 + 4`;
-    const calc3 = `${calc2} - 2`;
-    const calc4 = `${calc3} = 7`;
-    const nextFind1 = `${calc4}\n\nNext, we`;
-    const nextFind2 = `${nextFind1} find`;
-    const nextFind3 = `${nextFind2} the number of boxes`;
-    const nextFind4 = `${nextFind3} that contain either pens or pencils`;
-    const nextFind5 = `${nextFind4} from the total number of boxes`;
-    const nextFind6 = `${nextFind5} to find the number of boxes that contain neither pens nor pencils.`;
+    const chunks = [
+      "To solve the problem,",
+      " we need to determine",
+      " the number of boxes",
+      " that contain neither pens",
+      " nor pencils.",
+      " We start by using",
+      " the principle of inclusion-exclusion",
+      " to find the total",
+      " number of boxes that",
+      " contain either pens or",
+      " pencils.",
+      "\n\nGiven:",
+      "\n- Total number of boxes:",
+      " 10",
+      "\n- Boxes containing pencils:",
+      " 5",
+      "\n- Boxes containing pens:",
+      " 4",
+      "\n- Boxes containing both",
+      " pens and pencils: 2",
+      "\n\nFirst, we calculate the",
+      " number of boxes that",
+      " contain either pens or",
+      " pencils:",
+      "\n\nNumber with either pens",
+      " or pencils = 5",
+      " + 4 - 2",
+      " = 7",
+      "\n\nNext, we",
+      " find",
+      " the number of boxes",
+      " that contain either pens",
+      " or pencils from the",
+      " total number of boxes",
+      " to find the number",
+      " of boxes that contain",
+      " neither pens nor pencils.",
+    ];
+
+    const cumulative = (count) => chunks.slice(0, count).join("");
+    const stepFocus = (index) => `${cumulative(index)}${d(chunks[index])}`;
+    const calc4 = cumulative(28);
+    const wrongSentence = cumulative(37);
     const afterRemask = `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`;
     const final1 = `${afterRemask}\n\nNumber with neither pens nor pencils`;
     const final2 = `${final1} = 10 - 7`;
@@ -389,55 +414,42 @@
 
     const steps = [
       { title: "Step 00 / Empty answer", focus: empty },
-      { title: "Step 01 / Decode block", focus: d(intro1) },
-      { title: "Step 02 / Decode block", focus: `${intro1} ${d("the number of boxes that contain neither pens nor pencils.")}` },
-      { title: "Step 03 / Decode block", focus: `${intro2} ${d("We start by using the principle of inclusion-exclusion")}` },
-      { title: "Step 04 / Decode block", focus: `${intro3} ${d("to find the total number of boxes that contain either pens or pencils.")}` },
-      { title: "Step 05 / Decode block", focus: `${intro4}\n\n${d("Given:")}` },
-      { title: "Step 06 / Decode block", focus: `${facts1}\n${d("- Total number of boxes: 10")}` },
-      { title: "Step 07 / Decode block", focus: `${facts2}\n${d("- Boxes containing pencils: 5")}` },
-      { title: "Step 08 / Decode block", focus: `${facts3}\n${d("- Boxes containing pens: 4")}` },
-      { title: "Step 09 / Decode block", focus: `${facts4}\n${d("- Boxes containing both pens and pencils: 2")}` },
-      { title: "Step 10 / Decode block", focus: `${facts5}\n\n${d("First, we calculate the number of boxes that contain either pens or pencils:")}` },
-      { title: "Step 11 / Decode block", focus: `${calc1}\n\n${d("Number with either pens or pencils = 5 + 4")}` },
-      { title: "Step 12 / Decode block", focus: `${calc2} ${d("- 2")}` },
-      { title: "Step 13 / Decode block", focus: `${calc3} ${d("= 7")}` },
-      { title: "Step 14 / Decode block", focus: `${calc4}\n\n${d("Next, we")}` },
-      { title: "Step 15 / Decode block: wrong operation", focus: `${nextFind1} ${d("find")}` },
-      { title: "Step 16 / Decode block", focus: `${nextFind2} ${d("the number of boxes")}` },
-      { title: "Step 17 / Decode block", focus: `${nextFind3} ${d("that contain either pens or pencils")}` },
-      { title: "Step 18 / Decode block", focus: `${nextFind4} ${d("from the total number of boxes")}` },
-      { title: "Step 19 / Decode block", focus: `${nextFind5} ${d("to find the number of boxes that contain neither pens nor pencils.")}` },
+      ...chunks.map((_, index) => ({
+        title: `Step ${String(index + 1).padStart(2, "0")} / Decode block ~4 tokens`,
+        focus: stepFocus(index),
+      })),
       {
-        title: "Step 20 / Remask phase 1: target chosen",
+        title: "Step 38 / Remask phase 1: target chosen",
         focus: `${calc4}\n\nNext, we <span class="remask-window">${d("find")} the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
       },
       {
-        title: "Step 21 / Remask phase 2: replace with MASK",
+        title: "Step 39 / Remask phase 2: replace with MASK",
         focus: `${calc4}\n\nNext, we <span class="remask-window">${oldToken("find")} ${d(maskToken)} the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
       },
       {
-        title: "Step 22 / Remask phase 3: decode MASK",
+        title: "Step 40 / Remask phase 3: decode MASK",
         focus: `${calc4}\n\nNext, we <span class="remask-window">${oldToken("find")} ${d(newToken("subtract"))} the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
       },
       {
-        title: "Step 23 / Remask phase 4: commit edit",
+        title: "Step 41 / Remask phase 4: commit edit",
         focus: `${calc4}\n\nNext, we <span class="remask-window">${d("subtract")} the number of boxes that contain</span> either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
       },
       {
-        title: "Step 24 / Stable remask probe: MASK",
+        title: "Step 42 / Stable remask probe: MASK",
         focus: `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or <span class="remask-window">${oldToken("pencils")} ${d(maskToken)}</span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
       },
       {
-        title: "Step 25 / Stable remask probe: restored",
+        title: "Step 43 / Stable remask probe: restored",
         focus: `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or <span class="remask-window">${oldToken("pencils")} ${d(newToken("pencils"))}</span> from the total number of boxes to find the number of boxes that contain neither pens nor pencils.`,
       },
-      { title: "Step 26 / Decode block", focus: `${calc4}\n\nNext, we subtract the number of boxes that contain either pens or pencils from the total number of boxes to find the number of boxes that contain neither pens nor pencils.` },
-      { title: "Step 27 / Decode block", focus: `${afterRemask}\n\n${d("Number with neither pens nor pencils")}` },
-      { title: "Step 28 / Decode block", focus: `${final1} ${d("= 10 - 7")}` },
-      { title: "Step 29 / Decode block", focus: `${final2} ${d("= 3")}` },
-      { title: "Step 30 / Decode block", focus: `${final3}\n\n${d("Thus, the number of boxes that contain neither pens nor pencils is:")}` },
-      { title: "Step 31 / Decode block", focus: `${final4} ${d("$$ \\boxed{3} $$")}` },
+      { title: "Step 44 / Decode block ~4 tokens", focus: `${afterRemask}\n\n${d("Number with neither pens")}` },
+      { title: "Step 45 / Decode block ~4 tokens", focus: `${afterRemask}\n\nNumber with neither pens ${d("nor pencils")}` },
+      { title: "Step 46 / Decode block ~4 tokens", focus: `${final1} ${d("= 10 - 7")}` },
+      { title: "Step 47 / Decode block ~4 tokens", focus: `${final2} ${d("= 3")}` },
+      { title: "Step 48 / Decode block ~4 tokens", focus: `${final3}\n\n${d("Thus, the number of")}` },
+      { title: "Step 49 / Decode block ~4 tokens", focus: `${final3}\n\nThus, the number of ${d("boxes that contain neither")}` },
+      { title: "Step 50 / Decode block ~4 tokens", focus: `${final3}\n\nThus, the number of boxes that contain neither ${d("pens nor pencils is:")}` },
+      { title: "Step 51 / Decode block", focus: `${final4} ${d("$$ \\boxed{3} $$")}` },
     ];
 
     const player = document.querySelector("[data-remask-player]");
