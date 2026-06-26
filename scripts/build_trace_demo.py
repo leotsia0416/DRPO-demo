@@ -25,6 +25,20 @@ SELECTED_CASES = [
     "math-500_444",  # x -> y
 ]
 
+SYNTHETIC_CHANGED_REMASKS_PER_CASE = 5
+SYNTHETIC_REPLACEMENT_TEXTS = [
+    " then",
+    " so",
+    " therefore",
+    " 2",
+    " 3",
+    " +",
+    " -",
+    " =",
+    " the",
+    " a",
+]
+
 
 def decode(tokenizer, token_ids):
     return tokenizer.decode(token_ids, skip_special_tokens=False)
@@ -97,6 +111,36 @@ def render_old_new_window(tokenizer, before_ids, after_ids, record):
     return "".join(parts)
 
 
+def single_token_replacements(tokenizer):
+    replacements = []
+    for text in SYNTHETIC_REPLACEMENT_TEXTS:
+        token_ids = tokenizer.encode(text, add_special_tokens=False)
+        if len(token_ids) == 1:
+            replacements.append(token_ids[0])
+    if not replacements:
+        raise RuntimeError("No single-token synthetic replacements are available for this tokenizer.")
+    return replacements
+
+
+def synthesize_changed_after_ids(tokenizer, before_ids, after_ids, record, replacement_ids, offset):
+    positions = record.get("remasked_positions") or []
+    if not positions:
+        return after_ids
+
+    local_pos = positions[0] - record["prompt_length"]
+    if local_pos < 0 or local_pos >= min(len(before_ids), len(after_ids)):
+        return after_ids
+
+    original_id = before_ids[local_pos]
+    for step in range(len(replacement_ids)):
+        replacement_id = replacement_ids[(offset + step) % len(replacement_ids)]
+        if replacement_id != original_id:
+            patched = list(after_ids)
+            patched[local_pos] = replacement_id
+            return patched
+    return after_ids
+
+
 def load_cases():
     payload = json.loads(VISUAL_CASES.read_text(encoding="utf-8"))
     cases = {case["example_abbr"]: case for case in payload["cases"]}
@@ -138,10 +182,13 @@ def build_steps(tokenizer, records):
     steps = [{"title": "Step 00 / Empty answer", "focus": '<span class="empty-token">0 generated tokens</span>'}]
     prev_after = []
     visible_step = 1
+    replacement_ids = single_token_replacements(tokenizer)
+    synthetic_count = 0
 
     for record in records:
         before_ids = record["generated_before_token_ids"]
-        after_ids = record["generated_after_token_ids"]
+        original_after_ids = record["generated_after_token_ids"]
+        after_ids = original_after_ids
 
         if before_ids[: len(prev_after)] == prev_after and len(before_ids) > len(prev_after):
             start = len(prev_after)
@@ -157,11 +204,28 @@ def build_steps(tokenizer, records):
             )
             visible_step += 1
 
-        if record.get("triggered"):
+        changed_by_remask = before_ids != after_ids
+        synthetic_change = False
+        if record.get("triggered") and not changed_by_remask and synthetic_count < SYNTHETIC_CHANGED_REMASKS_PER_CASE:
+            after_ids = synthesize_changed_after_ids(
+                tokenizer,
+                before_ids,
+                after_ids,
+                record,
+                replacement_ids,
+                synthetic_count,
+            )
+            synthetic_change = after_ids != original_after_ids
+            if synthetic_change:
+                synthetic_count += 1
+                changed_by_remask = True
+
+        if record.get("triggered") and changed_by_remask:
             positions = record.get("remasked_positions") or []
+            demo_note = " (demo token swap)" if synthetic_change else ""
             steps.append(
                 {
-                    "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 1: target",
+                    "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 1: target{demo_note}",
                     "focus": render_remask_window(
                         tokenizer,
                         before_ids,
@@ -178,7 +242,7 @@ def build_steps(tokenizer, records):
             if masked_ids:
                 steps.append(
                     {
-                        "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 2: MASK",
+                        "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 2: MASK{demo_note}",
                         "focus": render_remask_window(
                             tokenizer,
                             masked_ids,
@@ -191,18 +255,17 @@ def build_steps(tokenizer, records):
                 )
                 visible_step += 1
 
-            if before_ids != after_ids:
-                steps.append(
-                    {
-                        "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 3: refill",
-                        "focus": render_old_new_window(tokenizer, before_ids, after_ids, record),
-                    }
-                )
-                visible_step += 1
+            steps.append(
+                {
+                    "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 3: refill{demo_note}",
+                    "focus": render_old_new_window(tokenizer, before_ids, after_ids, record),
+                }
+            )
+            visible_step += 1
 
             steps.append(
                 {
-                    "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 4: commit",
+                    "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 4: commit{demo_note}",
                     "focus": render_remask_window(
                         tokenizer,
                         after_ids,
@@ -215,7 +278,7 @@ def build_steps(tokenizer, records):
             )
             visible_step += 1
 
-        prev_after = after_ids
+        prev_after = original_after_ids
 
     return steps
 
