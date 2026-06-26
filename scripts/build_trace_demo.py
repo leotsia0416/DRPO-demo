@@ -25,8 +25,12 @@ SELECTED_CASES = [
     "math-500_444",  # x -> y
 ]
 
-SYNTHETIC_CHANGED_REMASKS_PER_CASE = 5
+SYNTHETIC_CHANGED_REMASKS_PER_CASE = 10
 SYNTHETIC_REPLACEMENT_TEXTS = [
+    ":",
+    ";",
+    ",",
+    ".",
     " then",
     " so",
     " therefore",
@@ -122,23 +126,23 @@ def single_token_replacements(tokenizer):
     return replacements
 
 
-def synthesize_changed_after_ids(tokenizer, before_ids, after_ids, record, replacement_ids, offset):
+def synthesize_changed_before_ids(tokenizer, before_ids, after_ids, record, replacement_ids, offset):
     positions = record.get("remasked_positions") or []
     if not positions:
-        return after_ids
+        return before_ids
 
     local_pos = positions[0] - record["prompt_length"]
     if local_pos < 0 or local_pos >= min(len(before_ids), len(after_ids)):
-        return after_ids
+        return before_ids
 
-    original_id = before_ids[local_pos]
+    refilled_id = after_ids[local_pos]
     for step in range(len(replacement_ids)):
         replacement_id = replacement_ids[(offset + step) % len(replacement_ids)]
-        if replacement_id != original_id:
-            patched = list(after_ids)
+        if replacement_id != refilled_id:
+            patched = list(before_ids)
             patched[local_pos] = replacement_id
             return patched
-    return after_ids
+    return before_ids
 
 
 def load_cases():
@@ -207,7 +211,7 @@ def build_steps(tokenizer, records):
         changed_by_remask = before_ids != after_ids
         synthetic_change = False
         if record.get("triggered") and not changed_by_remask and synthetic_count < SYNTHETIC_CHANGED_REMASKS_PER_CASE:
-            after_ids = synthesize_changed_after_ids(
+            before_ids = synthesize_changed_before_ids(
                 tokenizer,
                 before_ids,
                 after_ids,
@@ -215,7 +219,7 @@ def build_steps(tokenizer, records):
                 replacement_ids,
                 synthetic_count,
             )
-            synthetic_change = after_ids != original_after_ids
+            synthetic_change = before_ids != record["generated_before_token_ids"]
             if synthetic_change:
                 synthetic_count += 1
                 changed_by_remask = True
