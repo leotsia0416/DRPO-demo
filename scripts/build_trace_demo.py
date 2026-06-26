@@ -26,6 +26,7 @@ SELECTED_CASES = [
 ]
 
 SYNTHETIC_CHANGED_REMASKS_PER_CASE = 1
+MAX_DISPLAYED_REMASKS_PER_CASE = 20
 SYNTHETIC_REPLACEMENT_TEXTS_BY_KIND = {
     "word": [
         " pens",
@@ -402,6 +403,7 @@ def build_steps(tokenizer, records):
     replacement_ids = dynamic_replacements_from_records(tokenizer, records, single_token_replacements(tokenizer))
     synthetic_indices = select_synthetic_change_indices(tokenizer, records)
     synthetic_count = 0
+    displayed_remask_count = 0
 
     for record_idx, record in enumerate(records):
         before_ids = record["generated_before_token_ids"]
@@ -443,7 +445,8 @@ def build_steps(tokenizer, records):
                 synthetic_count += 1
                 changed_by_remask = True
 
-        if record.get("triggered"):
+        if record.get("triggered") and displayed_remask_count < MAX_DISPLAYED_REMASKS_PER_CASE:
+            displayed_remask_count += 1
             local_window = record_local_window(record)
             local_positions = record_local_positions(record)
             masked_old_tokens = {
