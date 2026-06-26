@@ -455,7 +455,6 @@ def build_steps(tokenizer, records):
                 local_pos: before_ids[local_pos]
                 for local_pos in local_positions
                 if 0 <= local_pos < min(len(before_ids), len(after_ids))
-                and before_ids[local_pos] != after_ids[local_pos]
             }
             demo_note = " (demo token swap)" if synthetic_change else ""
             steps.append(
