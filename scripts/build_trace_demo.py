@@ -26,22 +26,63 @@ SELECTED_CASES = [
 ]
 
 SYNTHETIC_CHANGED_REMASKS_PER_CASE = 10
-SYNTHETIC_REPLACEMENT_TEXTS = [
-    ":",
-    ";",
-    ",",
-    ".",
-    " then",
-    " so",
-    " therefore",
-    " 2",
-    " 3",
-    " +",
-    " -",
-    " =",
-    " the",
-    " a",
-]
+SYNTHETIC_REPLACEMENT_TEXTS_BY_KIND = {
+    "word": [
+        " pens",
+        " pencils",
+        " items",
+        " terms",
+        " values",
+        " points",
+        " lines",
+        " number",
+        " total",
+        " sum",
+        " difference",
+        " ratio",
+        " area",
+    ],
+    "capital_word": [
+        "Total",
+        "Number",
+        "Sum",
+        "Difference",
+        "Ratio",
+        "Area",
+        "Thus",
+        "Next",
+    ],
+    "number": [
+        " 1",
+        " 2",
+        " 3",
+        " 4",
+        " 5",
+        " 6",
+        " 7",
+        " 8",
+        " 9",
+    ],
+    "operator": [
+        " +",
+        " -",
+        " =",
+        " \\times",
+        " \\div",
+    ],
+    "punct": [
+        ",",
+        ".",
+        ":",
+        ";",
+    ],
+    "latex": [
+        "$",
+        "$$",
+        "\\frac",
+        "\\text",
+    ],
+}
 
 
 def decode(tokenizer, token_ids):
@@ -116,14 +157,35 @@ def render_old_new_window(tokenizer, before_ids, after_ids, record):
 
 
 def single_token_replacements(tokenizer):
-    replacements = []
-    for text in SYNTHETIC_REPLACEMENT_TEXTS:
-        token_ids = tokenizer.encode(text, add_special_tokens=False)
-        if len(token_ids) == 1:
-            replacements.append(token_ids[0])
+    replacements = {}
+    for kind, texts in SYNTHETIC_REPLACEMENT_TEXTS_BY_KIND.items():
+        kind_ids = []
+        for text in texts:
+            token_ids = tokenizer.encode(text, add_special_tokens=False)
+            if len(token_ids) == 1:
+                kind_ids.append(token_ids[0])
+        if kind_ids:
+            replacements[kind] = kind_ids
     if not replacements:
         raise RuntimeError("No single-token synthetic replacements are available for this tokenizer.")
     return replacements
+
+
+def replacement_kind_for_token(token_text):
+    stripped = token_text.strip()
+    if not stripped:
+        return "punct"
+    if stripped in {"+", "-", "=", "\\times", "\\div"}:
+        return "operator"
+    if stripped.replace(".", "", 1).isdigit():
+        return "number"
+    if stripped.startswith("\\") or stripped in {"$", "$$"}:
+        return "latex"
+    if all(not ch.isalnum() for ch in stripped):
+        return "punct"
+    if stripped[:1].isupper():
+        return "capital_word"
+    return "word"
 
 
 def synthesize_changed_before_ids(tokenizer, before_ids, after_ids, record, replacement_ids, offset):
@@ -136,13 +198,45 @@ def synthesize_changed_before_ids(tokenizer, before_ids, after_ids, record, repl
         return before_ids
 
     refilled_id = after_ids[local_pos]
-    for step in range(len(replacement_ids)):
-        replacement_id = replacement_ids[(offset + step) % len(replacement_ids)]
+    refilled_text = decode(tokenizer, after_ids[local_pos : local_pos + 1])
+    kind = replacement_kind_for_token(refilled_text)
+    candidates = replacement_ids.get(kind) or replacement_ids.get("word") or next(iter(replacement_ids.values()))
+    for step in range(len(candidates)):
+        replacement_id = candidates[(offset + step) % len(candidates)]
         if replacement_id != refilled_id:
             patched = list(before_ids)
             patched[local_pos] = replacement_id
             return patched
     return before_ids
+
+
+def dynamic_replacements_from_records(tokenizer, records, fallback_replacements):
+    dynamic = {kind: [] for kind in fallback_replacements}
+    seen = {kind: set() for kind in fallback_replacements}
+    for record in records:
+        if not record.get("triggered"):
+            continue
+        before_ids = record["generated_before_token_ids"]
+        after_ids = record["generated_after_token_ids"]
+        if before_ids != after_ids:
+            continue
+        local_pos = remasked_local_pos(record, before_ids, after_ids)
+        if local_pos is None:
+            continue
+        token_id = after_ids[local_pos]
+        token_text = decode(tokenizer, [token_id])
+        if not is_readable_demo_token(token_text):
+            continue
+        kind = replacement_kind_for_token(token_text)
+        if kind not in dynamic or token_id in seen[kind]:
+            continue
+        dynamic[kind].append(token_id)
+        seen[kind].add(token_id)
+
+    merged = {}
+    for kind, fallback_ids in fallback_replacements.items():
+        merged[kind] = dynamic.get(kind, []) + [token_id for token_id in fallback_ids if token_id not in seen.get(kind, set())]
+    return merged
 
 
 def remasked_local_pos(record, before_ids, after_ids):
@@ -226,7 +320,7 @@ def build_steps(tokenizer, records):
     steps = [{"title": "Step 00 / Empty answer", "focus": '<span class="empty-token">0 generated tokens</span>'}]
     prev_after = []
     visible_step = 1
-    replacement_ids = single_token_replacements(tokenizer)
+    replacement_ids = dynamic_replacements_from_records(tokenizer, records, single_token_replacements(tokenizer))
     synthetic_indices = select_synthetic_change_indices(tokenizer, records)
     synthetic_count = 0
 
