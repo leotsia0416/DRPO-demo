@@ -159,14 +159,17 @@ def render_old_new_window(tokenizer, before_ids, after_ids, record):
 
 def unpack_edit(edit_value):
     if isinstance(edit_value, tuple):
-        return edit_value
-    return edit_value, False
+        if len(edit_value) == 3:
+            return edit_value
+        old_token_id, changed = edit_value
+        return old_token_id, changed, None
+    return edit_value, False, None
 
 
 def render_inline_edit(tokenizer, edit_value, new_token_id):
-    old_token_id, changed = unpack_edit(edit_value)
+    old_token_id, changed, change_number = unpack_edit(edit_value)
     marker_class = " edit-changed" if changed else ""
-    return (
+    body = (
         f'<span class="old{marker_class}">'
         + esc(decode(tokenizer, [old_token_id]))
         + "</span> "
@@ -174,6 +177,13 @@ def render_inline_edit(tokenizer, edit_value, new_token_id):
         + esc(decode(tokenizer, [new_token_id]))
         + "</span>"
     )
+    if changed and change_number is not None:
+        return (
+            f'<span class="change-pair" data-change="{change_number}">'
+            + body
+            + "</span>"
+        )
+    return body
 
 
 def render_token_stream(
@@ -422,6 +432,7 @@ def build_steps(tokenizer, records):
     synthetic_indices = select_synthetic_change_indices(tokenizer, records)
     displayed_indices = select_displayed_remask_indices(records, synthetic_indices)
     synthetic_count = 0
+    changed_edit_count = 0
 
     for record_idx, record in enumerate(records):
         before_ids = record["generated_before_token_ids"]
@@ -471,14 +482,15 @@ def build_steps(tokenizer, records):
                 for local_pos in local_positions
                 if 0 <= local_pos < len(before_ids)
             }
-            current_edits = {
-                local_pos: (
-                    before_ids[local_pos],
-                    before_ids[local_pos] != after_ids[local_pos],
-                )
-                for local_pos in local_positions
-                if 0 <= local_pos < min(len(before_ids), len(after_ids))
-            }
+            current_edits = {}
+            for local_pos in local_positions:
+                if 0 <= local_pos < min(len(before_ids), len(after_ids)):
+                    changed = before_ids[local_pos] != after_ids[local_pos]
+                    change_number = None
+                    if changed:
+                        changed_edit_count += 1
+                        change_number = changed_edit_count
+                    current_edits[local_pos] = (before_ids[local_pos], changed, change_number)
             demo_note = " (demo token swap)" if synthetic_change else ""
             steps.append(
                 {
@@ -728,6 +740,29 @@ def build_html(case_payloads):
       text-decoration: underline;
       text-decoration-thickness: 0.16em;
       text-underline-offset: 0.16em;
+    }}
+    .change-pair {{
+      position: relative;
+      display: inline-block;
+      margin: 0 0.12em;
+    }}
+    .change-pair::before {{
+      content: attr(data-change);
+      position: absolute;
+      left: -0.72em;
+      top: -0.92em;
+      min-width: 1.16em;
+      height: 1.16em;
+      border-radius: 999px;
+      background: #2f6df6;
+      color: white;
+      border: 2px solid white;
+      box-shadow: 0 1px 4px rgba(17, 17, 17, 0.24);
+      font: 700 10px/1.02 ui-sans-serif, system-ui, sans-serif;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
     }}
     .mask {{
       color: var(--mask-ink);
