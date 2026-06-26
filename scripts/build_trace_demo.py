@@ -156,6 +156,84 @@ def render_old_new_window(tokenizer, before_ids, after_ids, record):
     return "".join(parts)
 
 
+def render_inline_edit(tokenizer, old_token_id, new_token_id):
+    return (
+        '<span class="old">'
+        + esc(decode(tokenizer, [old_token_id]))
+        + "</span> "
+        + '<span class="new">'
+        + esc(decode(tokenizer, [new_token_id]))
+        + "</span>"
+    )
+
+
+def render_token_stream(
+    tokenizer,
+    token_ids,
+    edits=None,
+    decode_span=None,
+    remask_window=None,
+    highlight_positions=None,
+    mask_old_tokens=None,
+):
+    edits = edits or {}
+    highlight_positions = set(highlight_positions or [])
+    mask_old_tokens = mask_old_tokens or {}
+    remask_start, remask_end = remask_window or (None, None)
+    decode_start, decode_end = decode_span or (None, None)
+
+    parts = []
+    window_open = False
+    for pos, token_id in enumerate(token_ids):
+        if remask_start is not None and pos == remask_start:
+            parts.append('<span class="remask-window">')
+            window_open = True
+
+        if pos in mask_old_tokens:
+            rendered = (
+                '<span class="old">'
+                + esc(decode(tokenizer, [mask_old_tokens[pos]]))
+                + "</span> "
+                + '<span class="mask">MASK</span>'
+            )
+        elif pos in edits:
+            rendered = render_inline_edit(tokenizer, edits[pos], token_id)
+        else:
+            rendered = esc(decode(tokenizer, [token_id]))
+
+        in_decode = (
+            (decode_start is not None and decode_start <= pos < decode_end)
+            or pos in highlight_positions
+            or pos in mask_old_tokens
+        )
+        if in_decode:
+            rendered = '<span class="decode-block">' + rendered + "</span>"
+        parts.append(rendered)
+
+        if remask_end is not None and pos + 1 == remask_end and window_open:
+            parts.append("</span>")
+            window_open = False
+
+    if window_open:
+        parts.append("</span>")
+    return "".join(parts)
+
+
+def record_local_window(record):
+    start = max(0, record["window_token_start"] - record["prompt_length"])
+    end = max(start, record["window_token_end"] - record["prompt_length"])
+    return start, end
+
+
+def record_local_positions(record):
+    start, end = record_local_window(record)
+    return [
+        pos - record["prompt_length"]
+        for pos in (record.get("remasked_positions") or [])
+        if start <= pos - record["prompt_length"] < end
+    ]
+
+
 def single_token_replacements(tokenizer):
     replacements = {}
     for kind, texts in SYNTHETIC_REPLACEMENT_TEXTS_BY_KIND.items():
@@ -319,6 +397,7 @@ def load_records_by_prompt(cases):
 def build_steps(tokenizer, records):
     steps = [{"title": "Step 00 / Empty answer", "focus": '<span class="empty-token">0 generated tokens</span>'}]
     prev_after = []
+    persistent_edits = {}
     visible_step = 1
     replacement_ids = dynamic_replacements_from_records(tokenizer, records, single_token_replacements(tokenizer))
     synthetic_indices = select_synthetic_change_indices(tokenizer, records)
@@ -338,7 +417,12 @@ def build_steps(tokenizer, records):
                         f"Step {visible_step:02d} / block {record['block_idx']} decode "
                         f"{end - start} tokenizer tokens"
                     ),
-                    "focus": render_decode_block(tokenizer, before_ids, start, end),
+                    "focus": render_token_stream(
+                        tokenizer,
+                        before_ids,
+                        edits=persistent_edits,
+                        decode_span=(start, end),
+                    ),
                 }
             )
             visible_step += 1
@@ -360,18 +444,24 @@ def build_steps(tokenizer, records):
                 changed_by_remask = True
 
         if record.get("triggered") and changed_by_remask:
-            positions = record.get("remasked_positions") or []
+            local_window = record_local_window(record)
+            local_positions = record_local_positions(record)
+            current_edits = {
+                local_pos: before_ids[local_pos]
+                for local_pos in local_positions
+                if 0 <= local_pos < min(len(before_ids), len(after_ids))
+                and before_ids[local_pos] != after_ids[local_pos]
+            }
             demo_note = " (demo token swap)" if synthetic_change else ""
             steps.append(
                 {
                     "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 1: target{demo_note}",
-                    "focus": render_remask_window(
+                    "focus": render_token_stream(
                         tokenizer,
                         before_ids,
-                        record["prompt_length"],
-                        record["window_token_start"],
-                        record["window_token_end"],
-                        positions,
+                        edits=persistent_edits,
+                        remask_window=local_window,
+                        highlight_positions=local_positions,
                     ),
                 }
             )
@@ -382,36 +472,42 @@ def build_steps(tokenizer, records):
                 steps.append(
                     {
                         "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 2: MASK{demo_note}",
-                        "focus": render_remask_window(
+                        "focus": render_token_stream(
                             tokenizer,
                             masked_ids,
-                            record["prompt_length"],
-                            record["window_token_start"],
-                            record["window_token_end"],
-                            positions,
+                            edits=persistent_edits,
+                            remask_window=local_window,
+                            mask_old_tokens=current_edits,
                         ),
                     }
                 )
                 visible_step += 1
 
+            preview_edits = {**persistent_edits, **current_edits}
             steps.append(
                 {
                     "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 3: refill{demo_note}",
-                    "focus": render_old_new_window(tokenizer, before_ids, after_ids, record),
+                    "focus": render_token_stream(
+                        tokenizer,
+                        after_ids,
+                        edits=preview_edits,
+                        remask_window=local_window,
+                        highlight_positions=local_positions,
+                    ),
                 }
             )
             visible_step += 1
 
+            persistent_edits.update(current_edits)
             steps.append(
                 {
                     "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 4: commit{demo_note}",
-                    "focus": render_remask_window(
+                    "focus": render_token_stream(
                         tokenizer,
                         after_ids,
-                        record["prompt_length"],
-                        record["window_token_start"],
-                        record["window_token_end"],
-                        positions,
+                        edits=persistent_edits,
+                        remask_window=local_window,
+                        highlight_positions=local_positions,
                     ),
                 }
             )
@@ -736,7 +832,7 @@ def build_html(case_payloads):
           </div>
           <div class="dots" data-dots aria-hidden="true"></div>
         </div>
-        <p class="note">Black frame = exact tokenizer block or remasked token from trace. Yellow background = remask window.</p>
+        <p class="note">Black frame = current decode or remask token. Yellow = remask window. Red strike = removed token; green = refill token, kept in later steps.</p>
       `;
       caseRoot.appendChild(card);
 
