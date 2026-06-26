@@ -25,7 +25,7 @@ SELECTED_CASES = [
     "math-500_444",  # x -> y
 ]
 
-SYNTHETIC_CHANGED_REMASKS_PER_CASE = 1
+SYNTHETIC_CHANGED_REMASKS_PER_CASE = 4
 MAX_DISPLAYED_REMASKS_PER_CASE = 20
 SYNTHETIC_REPLACEMENT_TEXTS_BY_KIND = {
     "word": [
@@ -157,12 +157,20 @@ def render_old_new_window(tokenizer, before_ids, after_ids, record):
     return "".join(parts)
 
 
-def render_inline_edit(tokenizer, old_token_id, new_token_id):
+def unpack_edit(edit_value):
+    if isinstance(edit_value, tuple):
+        return edit_value
+    return edit_value, False
+
+
+def render_inline_edit(tokenizer, edit_value, new_token_id):
+    old_token_id, changed = unpack_edit(edit_value)
+    marker_class = " edit-changed" if changed else ""
     return (
-        '<span class="old">'
+        f'<span class="old{marker_class}">'
         + esc(decode(tokenizer, [old_token_id]))
         + "</span> "
-        + '<span class="new">'
+        + f'<span class="new{marker_class}">'
         + esc(decode(tokenizer, [new_token_id]))
         + "</span>"
     )
@@ -358,6 +366,16 @@ def select_synthetic_change_indices(tokenizer, records):
     return {idx for _, idx in candidates[:SYNTHETIC_CHANGED_REMASKS_PER_CASE]}
 
 
+def select_displayed_remask_indices(records, synthetic_indices):
+    selected = set(synthetic_indices)
+    for idx, record in enumerate(records):
+        if len(selected) >= MAX_DISPLAYED_REMASKS_PER_CASE:
+            break
+        if record.get("triggered"):
+            selected.add(idx)
+    return selected
+
+
 def load_cases():
     payload = json.loads(VISUAL_CASES.read_text(encoding="utf-8"))
     cases = {case["example_abbr"]: case for case in payload["cases"]}
@@ -402,8 +420,8 @@ def build_steps(tokenizer, records):
     visible_step = 1
     replacement_ids = dynamic_replacements_from_records(tokenizer, records, single_token_replacements(tokenizer))
     synthetic_indices = select_synthetic_change_indices(tokenizer, records)
+    displayed_indices = select_displayed_remask_indices(records, synthetic_indices)
     synthetic_count = 0
-    displayed_remask_count = 0
 
     for record_idx, record in enumerate(records):
         before_ids = record["generated_before_token_ids"]
@@ -445,8 +463,7 @@ def build_steps(tokenizer, records):
                 synthetic_count += 1
                 changed_by_remask = True
 
-        if record.get("triggered") and displayed_remask_count < MAX_DISPLAYED_REMASKS_PER_CASE:
-            displayed_remask_count += 1
+        if record.get("triggered") and record_idx in displayed_indices:
             local_window = record_local_window(record)
             local_positions = record_local_positions(record)
             masked_old_tokens = {
@@ -455,7 +472,10 @@ def build_steps(tokenizer, records):
                 if 0 <= local_pos < len(before_ids)
             }
             current_edits = {
-                local_pos: before_ids[local_pos]
+                local_pos: (
+                    before_ids[local_pos],
+                    before_ids[local_pos] != after_ids[local_pos],
+                )
                 for local_pos in local_positions
                 if 0 <= local_pos < min(len(before_ids), len(after_ids))
             }
@@ -698,6 +718,16 @@ def build_html(case_payloads):
       border-radius: 8px;
       padding: 0.04em 0.22em;
       font-weight: 700;
+    }}
+    .edit-changed {{
+      outline: 2px solid #111;
+      outline-offset: 1px;
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.78);
+    }}
+    .new.edit-changed {{
+      text-decoration: underline;
+      text-decoration-thickness: 0.16em;
+      text-underline-offset: 0.16em;
     }}
     .mask {{
       color: var(--mask-ink);
