@@ -25,7 +25,9 @@ SELECTED_CASES = [
     "math-500_444",  # x -> y
 ]
 
-SYNTHETIC_CHANGED_REMASKS_PER_CASE = 4
+DISPLAYED_REMASKS_PER_CASE = 5
+REAL_CHANGED_REMASKS_PER_CASE = 1
+SYNTHETIC_CHANGED_REMASKS_PER_CASE = 1
 SYNTHETIC_REPLACEMENT_TEXTS_BY_KIND = {
     "word": [
         " pens",
@@ -357,6 +359,37 @@ def select_synthetic_change_indices(tokenizer, records):
     return {idx for _, idx in candidates[:SYNTHETIC_CHANGED_REMASKS_PER_CASE]}
 
 
+def select_display_remask_indices(tokenizer, records, synthetic_indices):
+    real_changed = []
+    unchanged_candidates = []
+    for idx, record in enumerate(records):
+        if not record.get("triggered"):
+            continue
+        before_ids = record["generated_before_token_ids"]
+        after_ids = record["generated_after_token_ids"]
+        if before_ids != after_ids:
+            real_changed.append(idx)
+            continue
+        if idx in synthetic_indices:
+            continue
+        local_pos = remasked_local_pos(record, before_ids, after_ids)
+        if local_pos is None:
+            continue
+        token_text = decode(tokenizer, after_ids[local_pos : local_pos + 1])
+        if not is_readable_demo_token(token_text):
+            continue
+        priority = 0 if token_text.strip().isalpha() else 1
+        unchanged_candidates.append((priority, idx))
+
+    selected = set(real_changed[:REAL_CHANGED_REMASKS_PER_CASE]) | set(synthetic_indices)
+    unchanged_candidates.sort()
+    for _, idx in unchanged_candidates:
+        if len(selected) >= DISPLAYED_REMASKS_PER_CASE:
+            break
+        selected.add(idx)
+    return selected
+
+
 def load_cases():
     payload = json.loads(VISUAL_CASES.read_text(encoding="utf-8"))
     cases = {case["example_abbr"]: case for case in payload["cases"]}
@@ -401,6 +434,7 @@ def build_steps(tokenizer, records):
     visible_step = 1
     replacement_ids = dynamic_replacements_from_records(tokenizer, records, single_token_replacements(tokenizer))
     synthetic_indices = select_synthetic_change_indices(tokenizer, records)
+    display_indices = select_display_remask_indices(tokenizer, records, synthetic_indices)
     synthetic_count = 0
 
     for record_idx, record in enumerate(records):
@@ -443,7 +477,7 @@ def build_steps(tokenizer, records):
                 synthetic_count += 1
                 changed_by_remask = True
 
-        if record.get("triggered") and changed_by_remask:
+        if record.get("triggered") and record_idx in display_indices:
             local_window = record_local_window(record)
             local_positions = record_local_positions(record)
             current_edits = {
@@ -452,7 +486,12 @@ def build_steps(tokenizer, records):
                 if 0 <= local_pos < min(len(before_ids), len(after_ids))
                 and before_ids[local_pos] != after_ids[local_pos]
             }
-            demo_note = " (demo token swap)" if synthetic_change else ""
+            if synthetic_change:
+                demo_note = " (demo token swap)"
+            elif not current_edits:
+                demo_note = " (same refill)"
+            else:
+                demo_note = ""
             steps.append(
                 {
                     "title": f"Step {visible_step:02d} / block {record['block_idx']} remask phase 1: target{demo_note}",
@@ -477,6 +516,7 @@ def build_steps(tokenizer, records):
                             masked_ids,
                             edits=persistent_edits,
                             remask_window=local_window,
+                            highlight_positions=local_positions,
                             mask_old_tokens=current_edits,
                         ),
                     }
