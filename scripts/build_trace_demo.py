@@ -25,7 +25,7 @@ SELECTED_CASES = [
     "math-500_444",  # x -> y
 ]
 
-SYNTHETIC_CHANGED_REMASKS_PER_CASE = 10
+SYNTHETIC_CHANGED_REMASKS_PER_CASE = 4
 SYNTHETIC_REPLACEMENT_TEXTS_BY_KIND = {
     "word": [
         " pens",
@@ -781,6 +781,19 @@ def build_html(case_payloads):
       }});
     }}
 
+    function scrollToActiveMark(viewport) {{
+      const marks = viewport.querySelectorAll(".mask, .new, .old, .decode-block");
+      const target = marks.length ? marks[marks.length - 1] : null;
+      if (!target) {{
+        viewport.scrollTop = viewport.scrollHeight;
+        return;
+      }}
+      const viewportBox = viewport.getBoundingClientRect();
+      const targetBox = target.getBoundingClientRect();
+      const targetTop = viewport.scrollTop + targetBox.top - viewportBox.top;
+      viewport.scrollTop = Math.max(0, targetTop - viewport.clientHeight * 0.38);
+    }}
+
     function renderStep(card, caseData) {{
       const index = states.get(caseData.id) ?? 0;
       const step = caseData.steps[index];
@@ -788,7 +801,7 @@ def build_html(case_payloads):
       const focus = card.querySelector("[data-focus-line]");
       focus.innerHTML = step.focus;
       const viewport = card.querySelector(".viewport");
-      viewport.scrollTop = viewport.scrollHeight;
+      scrollToActiveMark(viewport);
       renderDots(card, caseData.steps, index);
       card.querySelector("[data-prev-step]").disabled = index === 0;
       card.querySelector("[data-next-step]").textContent = index === caseData.steps.length - 1 ? "Restart" : "Next step";
