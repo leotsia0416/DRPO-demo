@@ -145,6 +145,46 @@ def synthesize_changed_before_ids(tokenizer, before_ids, after_ids, record, repl
     return before_ids
 
 
+def remasked_local_pos(record, before_ids, after_ids):
+    positions = record.get("remasked_positions") or []
+    if not positions:
+        return None
+    local_pos = positions[0] - record["prompt_length"]
+    if local_pos < 0 or local_pos >= min(len(before_ids), len(after_ids)):
+        return None
+    return local_pos
+
+
+def is_readable_demo_token(token_text):
+    stripped = token_text.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("<|") or stripped.endswith("|>"):
+        return False
+    return True
+
+
+def select_synthetic_change_indices(tokenizer, records):
+    candidates = []
+    for idx, record in enumerate(records):
+        if not record.get("triggered"):
+            continue
+        before_ids = record["generated_before_token_ids"]
+        after_ids = record["generated_after_token_ids"]
+        if before_ids != after_ids:
+            continue
+        local_pos = remasked_local_pos(record, before_ids, after_ids)
+        if local_pos is None:
+            continue
+        token_text = decode(tokenizer, after_ids[local_pos : local_pos + 1])
+        if not is_readable_demo_token(token_text):
+            continue
+        priority = 0 if token_text.strip().isalpha() else 1
+        candidates.append((priority, idx))
+    candidates.sort()
+    return {idx for _, idx in candidates[:SYNTHETIC_CHANGED_REMASKS_PER_CASE]}
+
+
 def load_cases():
     payload = json.loads(VISUAL_CASES.read_text(encoding="utf-8"))
     cases = {case["example_abbr"]: case for case in payload["cases"]}
@@ -187,9 +227,10 @@ def build_steps(tokenizer, records):
     prev_after = []
     visible_step = 1
     replacement_ids = single_token_replacements(tokenizer)
+    synthetic_indices = select_synthetic_change_indices(tokenizer, records)
     synthetic_count = 0
 
-    for record in records:
+    for record_idx, record in enumerate(records):
         before_ids = record["generated_before_token_ids"]
         original_after_ids = record["generated_after_token_ids"]
         after_ids = original_after_ids
@@ -210,7 +251,7 @@ def build_steps(tokenizer, records):
 
         changed_by_remask = before_ids != after_ids
         synthetic_change = False
-        if record.get("triggered") and not changed_by_remask and synthetic_count < SYNTHETIC_CHANGED_REMASKS_PER_CASE:
+        if record_idx in synthetic_indices:
             before_ids = synthesize_changed_before_ids(
                 tokenizer,
                 before_ids,
