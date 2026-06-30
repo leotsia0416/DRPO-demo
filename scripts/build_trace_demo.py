@@ -594,6 +594,7 @@ def build_path_comparison_steps(tokenizer, target_abbr, result_maps=None):
     window_persistent_edits = {}
     changed_edit_count = 0
     visible_step = 1
+    first_remask_step = None
 
     for real_record in real_records:
         window_record = window_by_generated.get(real_record.get("generated_blocks"))
@@ -644,6 +645,8 @@ def build_path_comparison_steps(tokenizer, target_abbr, result_maps=None):
             window_window = record_local_window(window_record)
             real_positions = record_local_positions_from(real_record, "remasked_positions")
             window_positions = record_local_positions_from(window_record, "would_remasked_positions")
+            if first_remask_step is None:
+                first_remask_step = len(steps)
 
             real_masked_old_tokens = {
                 local_pos: real_before[local_pos]
@@ -800,6 +803,7 @@ def build_path_comparison_steps(tokenizer, target_abbr, result_maps=None):
         "mode": "paired",
         "prompt": prompt[:360] + ("..." if len(prompt) > 360 else ""),
         "steps": steps,
+        "first_remask_step": first_remask_step if first_remask_step is not None else 0,
         "strict_change": strict_change,
         "real_correct": real_result.get("correct"),
         "window_correct": window_result.get("correct"),
@@ -1442,6 +1446,7 @@ def build_html(case_payloads, comparison_payload):
             <p class="step-title" data-step-title></p>
             <div class="controls">
               <button type="button" class="control-button secondary" data-prev-step>Back</button>
+              <button type="button" class="control-button secondary" data-first-remask>First remask</button>
               <button type="button" class="control-button" data-next-step>Next step</button>
             </div>
           </div>
@@ -1467,6 +1472,10 @@ def build_html(case_payloads, comparison_payload):
 
       card.querySelector("[data-prev-step]").addEventListener("click", () => {{
         states.set(caseData.id, Math.max(0, (states.get(caseData.id) ?? 0) - 1));
+        renderComparisonStep(card, caseData);
+      }});
+      card.querySelector("[data-first-remask]").addEventListener("click", () => {{
+        states.set(caseData.id, caseData.first_remask_step ?? 0);
         renderComparisonStep(card, caseData);
       }});
       card.querySelector("[data-next-step]").addEventListener("click", () => {{
