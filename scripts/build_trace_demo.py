@@ -277,6 +277,15 @@ def record_local_positions(record):
     ]
 
 
+def record_local_positions_from(record, field_name):
+    start, end = record_local_window(record)
+    return [
+        pos - record["prompt_length"]
+        for pos in (record.get(field_name) or [])
+        if start <= pos - record["prompt_length"] < end
+    ]
+
+
 def single_token_replacements(tokenizer):
     replacements = {}
     for kind, texts in SYNTHETIC_REPLACEMENT_TEXTS_BY_KIND.items():
@@ -484,6 +493,21 @@ def load_window_only_would_events():
     return events
 
 
+def load_event_records_for_abbr(event_path, target_abbr):
+    prompt_to_abbr = load_prompt_to_abbr()
+    records = []
+    with event_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            abbr = prompt_to_abbr.get(prompt_key(record.get("input")))
+            if abbr == target_abbr:
+                records.append(record)
+    records.sort(key=lambda item: (item.get("generated_blocks", -1), item.get("block_idx", -1)))
+    return records
+
+
 def selected_token_change(record):
     changes = []
     for position in record.get("remasked_positions") or []:
@@ -493,6 +517,259 @@ def selected_token_change(record):
         if 0 <= offset < min(len(before_ids), len(after_ids)) and before_ids[offset] != after_ids[offset]:
             changes.append((position, offset, before_ids[offset], after_ids[offset]))
     return changes
+
+
+def render_path_panel_step(
+    tokenizer,
+    token_ids,
+    persistent_edits=None,
+    decode_span=None,
+    remask_window=None,
+    highlight_positions=None,
+    mask_old_tokens=None,
+):
+    if not token_ids:
+        return '<span class="empty-token">0 generated tokens</span>'
+    return render_token_stream(
+        tokenizer,
+        token_ids,
+        edits=persistent_edits or {},
+        decode_span=decode_span,
+        remask_window=remask_window,
+        highlight_positions=highlight_positions,
+        mask_old_tokens=mask_old_tokens,
+    )
+
+
+def build_path_comparison_steps(tokenizer):
+    real_records = load_event_records_for_abbr(EVENT_TRACE, PATH_COMPARISON_CASE)
+    window_records = load_event_records_for_abbr(WINDOW_ONLY_EVENT_TRACE, PATH_COMPARISON_CASE)
+    if not real_records or not window_records:
+        return None
+
+    window_by_generated = {record.get("generated_blocks"): record for record in window_records}
+    prompt = (real_records[0].get("input") or [{}])[0].get("prompt", "")
+    steps = [
+        {
+            "title": "Step 00 / empty answer",
+            "window_title": "Window-only / no hard remask",
+            "real_title": "Real remask",
+            "window_focus": '<span class="empty-token">0 generated tokens</span>',
+            "real_focus": '<span class="empty-token">0 generated tokens</span>',
+        }
+    ]
+
+    prev_real_after = []
+    prev_window_after = []
+    real_persistent_edits = {}
+    window_persistent_edits = {}
+    changed_edit_count = 0
+    visible_step = 1
+
+    for real_record in real_records:
+        window_record = window_by_generated.get(real_record.get("generated_blocks"))
+        if not window_record:
+            continue
+
+        real_before = real_record.get("generated_before_token_ids") or []
+        real_after = real_record.get("generated_after_token_ids") or real_before
+        window_before = window_record.get("generated_before_token_ids") or []
+        window_after = window_record.get("generated_after_token_ids") or window_before
+
+        real_decode_span = None
+        if real_before[: len(prev_real_after)] == prev_real_after and len(real_before) > len(prev_real_after):
+            real_decode_span = (len(prev_real_after), len(real_before))
+
+        window_decode_span = None
+        if window_before[: len(prev_window_after)] == prev_window_after and len(window_before) > len(prev_window_after):
+            window_decode_span = (len(prev_window_after), len(window_before))
+
+        if real_decode_span or window_decode_span:
+            steps.append(
+                {
+                    "title": (
+                        f"Step {visible_step:02d} / block {real_record['block_idx']} synced decode"
+                    ),
+                    "window_title": f"window block {window_record['block_idx']}",
+                    "real_title": f"real block {real_record['block_idx']}",
+                    "window_focus": render_path_panel_step(
+                        tokenizer,
+                        window_before,
+                        persistent_edits=window_persistent_edits,
+                        decode_span=window_decode_span,
+                    ),
+                    "real_focus": render_path_panel_step(
+                        tokenizer,
+                        real_before,
+                        persistent_edits=real_persistent_edits,
+                        decode_span=real_decode_span,
+                    ),
+                }
+            )
+            visible_step += 1
+
+        real_triggered = bool(real_record.get("triggered"))
+        window_would_trigger = bool(window_record.get("would_trigger"))
+        if real_triggered or window_would_trigger:
+            real_window = record_local_window(real_record)
+            window_window = record_local_window(window_record)
+            real_positions = record_local_positions_from(real_record, "remasked_positions")
+            window_positions = record_local_positions_from(window_record, "would_remasked_positions")
+
+            real_masked_old_tokens = {
+                local_pos: real_before[local_pos]
+                for local_pos in real_positions
+                if 0 <= local_pos < len(real_before)
+            }
+            real_current_edits = {}
+            for local_pos in real_positions:
+                if 0 <= local_pos < min(len(real_before), len(real_after)):
+                    changed = real_before[local_pos] != real_after[local_pos]
+                    change_number = None
+                    if changed:
+                        changed_edit_count += 1
+                        change_number = changed_edit_count
+                    real_current_edits[local_pos] = (real_before[local_pos], changed, change_number)
+
+            steps.append(
+                {
+                    "title": f"Step {visible_step:02d} / block {real_record['block_idx']} remask target",
+                    "window_title": "would target, hard remask suppressed",
+                    "real_title": "target selected",
+                    "window_focus": render_path_panel_step(
+                        tokenizer,
+                        window_before,
+                        persistent_edits=window_persistent_edits,
+                        remask_window=window_window,
+                        highlight_positions=window_positions,
+                    ),
+                    "real_focus": render_path_panel_step(
+                        tokenizer,
+                        real_before,
+                        persistent_edits=real_persistent_edits,
+                        remask_window=real_window,
+                        highlight_positions=real_positions,
+                    ),
+                }
+            )
+            visible_step += 1
+
+            real_masked_ids = real_record.get("generated_with_masks_token_ids") or real_before
+            steps.append(
+                {
+                    "title": f"Step {visible_step:02d} / block {real_record['block_idx']} mask/suppress",
+                    "window_title": "suppressed: token remains visible",
+                    "real_title": "mask applied",
+                    "window_focus": render_path_panel_step(
+                        tokenizer,
+                        window_before,
+                        persistent_edits=window_persistent_edits,
+                        remask_window=window_window,
+                        highlight_positions=window_positions,
+                    ),
+                    "real_focus": render_path_panel_step(
+                        tokenizer,
+                        real_masked_ids,
+                        persistent_edits=real_persistent_edits,
+                        remask_window=real_window,
+                        highlight_positions=real_positions,
+                        mask_old_tokens=real_masked_old_tokens,
+                    ),
+                }
+            )
+            visible_step += 1
+
+            real_preview_edits = {**real_persistent_edits, **real_current_edits}
+            steps.append(
+                {
+                    "title": f"Step {visible_step:02d} / block {real_record['block_idx']} refill/continue",
+                    "window_title": "no refill: same token stream",
+                    "real_title": "refilled token stream",
+                    "window_focus": render_path_panel_step(
+                        tokenizer,
+                        window_after,
+                        persistent_edits=window_persistent_edits,
+                        remask_window=window_window,
+                        highlight_positions=window_positions,
+                    ),
+                    "real_focus": render_path_panel_step(
+                        tokenizer,
+                        real_after,
+                        persistent_edits=real_preview_edits,
+                        remask_window=real_window,
+                        highlight_positions=real_positions,
+                    ),
+                }
+            )
+            visible_step += 1
+
+            real_persistent_edits.update(real_current_edits)
+            steps.append(
+                {
+                    "title": f"Step {visible_step:02d} / block {real_record['block_idx']} commit",
+                    "window_title": "window-only committed",
+                    "real_title": "real remask committed",
+                    "window_focus": render_path_panel_step(
+                        tokenizer,
+                        window_after,
+                        persistent_edits=window_persistent_edits,
+                        remask_window=window_window,
+                        highlight_positions=window_positions,
+                    ),
+                    "real_focus": render_path_panel_step(
+                        tokenizer,
+                        real_after,
+                        persistent_edits=real_persistent_edits,
+                        remask_window=real_window,
+                        highlight_positions=real_positions,
+                    ),
+                }
+            )
+            visible_step += 1
+
+        prev_real_after = real_after
+        prev_window_after = window_after
+
+    strict_record = None
+    strict_window_record = None
+    for real_record in real_records:
+        changes = selected_token_change(real_record)
+        if not changes:
+            continue
+        window_record = window_by_generated.get(real_record.get("generated_blocks"))
+        if not window_record:
+            continue
+        if real_record.get("window_before_token_ids") != window_record.get("window_before_token_ids"):
+            continue
+        if real_record.get("candidate_positions") != window_record.get("candidate_positions"):
+            continue
+        if real_record.get("remasked_positions") != window_record.get("would_remasked_positions"):
+            continue
+        strict_record = real_record
+        strict_window_record = window_record
+        break
+
+    strict_change = None
+    if strict_record is not None:
+        position, offset, old_id, new_id = selected_token_change(strict_record)[0]
+        strict_change = {
+            "block": strict_record.get("block_idx"),
+            "generated_blocks": strict_record.get("generated_blocks"),
+            "position": position,
+            "old": decode(tokenizer, [old_id]),
+            "new": decode(tokenizer, [new_id]),
+            "best_real": strict_record.get("best_score"),
+            "best_window": strict_window_record.get("best_score") if strict_window_record else None,
+        }
+
+    return {
+        "id": PATH_COMPARISON_CASE,
+        "prompt": prompt[:360] + ("..." if len(prompt) > 360 else ""),
+        "steps": steps,
+        "strict_change": strict_change,
+        "real_records": len(real_records),
+        "window_records": len(window_records),
+    }
 
 
 def build_path_comparison(tokenizer):
@@ -967,7 +1244,7 @@ def build_html(case_payloads, comparison_payload):
     .comparison-card {{
       margin-top: 26px;
     }}
-    .comparison-grid {{
+    .comparison-player-grid {{
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 16px;
@@ -1000,8 +1277,16 @@ def build_html(case_payloads, comparison_payload):
       white-space: pre-wrap;
       overflow: auto;
     }}
+    .path-panel .viewport {{
+      min-height: 360px;
+      max-height: 58vh;
+      border-radius: 16px;
+    }}
+    .path-panel .viewport::before {{
+      content: attr(data-panel-label);
+    }}
     @media (max-width: 760px) {{
-      .comparison-grid {{ grid-template-columns: 1fr; }}
+      .comparison-player-grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -1011,14 +1296,12 @@ def build_html(case_payloads, comparison_payload):
     <p class="subtitle">Parallel examples from real tokenizer-block traces. Pick a sample to inspect decode blocks and remask phases.</p>
     <div class="tabs" data-tabs></div>
     <section data-cases></section>
-    <section class="card comparison-card" data-comparison></section>
   </main>
   <script>
     const cases = {data_json};
     const comparison = {comparison_json};
     const tabs = document.querySelector("[data-tabs]");
     const caseRoot = document.querySelector("[data-cases]");
-    const comparisonRoot = document.querySelector("[data-comparison]");
     const states = new Map();
 
     function makeButton(text, className = "control-button") {{
@@ -1064,6 +1347,22 @@ def build_html(case_payloads, comparison_payload):
       renderDots(card, caseData.steps, index);
       card.querySelector("[data-prev-step]").disabled = index === 0;
       card.querySelector("[data-next-step]").textContent = index === caseData.steps.length - 1 ? "Restart" : "Next step";
+    }}
+
+    function renderComparisonStep(card, comparisonData) {{
+      const index = states.get(comparisonData.id) ?? 0;
+      const step = comparisonData.steps[index];
+      card.querySelector("[data-step-title]").textContent = step.title;
+      card.querySelector("[data-window-title]").textContent = step.window_title;
+      card.querySelector("[data-real-title]").textContent = step.real_title;
+      const windowFocus = card.querySelector("[data-window-focus]");
+      const realFocus = card.querySelector("[data-real-focus]");
+      windowFocus.innerHTML = step.window_focus;
+      realFocus.innerHTML = step.real_focus;
+      card.querySelectorAll(".viewport").forEach(scrollToActiveMark);
+      renderDots(card, comparisonData.steps, index);
+      card.querySelector("[data-prev-step]").disabled = index === 0;
+      card.querySelector("[data-next-step]").textContent = index === comparisonData.steps.length - 1 ? "Restart" : "Next step";
     }}
 
     function activateCase(id) {{
@@ -1128,37 +1427,81 @@ def build_html(case_payloads, comparison_payload):
     }});
 
     if (comparison) {{
-      comparisonRoot.innerHTML = `
+      states.set(comparison.id, 0);
+
+      const tab = makeButton(comparison.id, "tab");
+      tab.dataset.caseId = comparison.id;
+      tab.addEventListener("click", () => activateCase(comparison.id));
+      tabs.appendChild(tab);
+
+      const card = document.createElement("article");
+      card.className = "card case-card comparison-card";
+      card.dataset.caseId = comparison.id;
+      const strict = comparison.strict_change;
+      const strictMeta = strict
+        ? `
+          <span class="pill">block ${{strict.block}}</span>
+          <span class="pill">token ${{strict.position}}</span>
+          <span class="pill">${{strict.old}} → ${{strict.new}}</span>
+        `
+        : "";
+      card.innerHTML = `
         <div class="meta">
-          <span class="pill">path comparison</span>
+          <span class="pill">synced path comparison</span>
           <span class="pill">${{comparison.id}}</span>
-          <span class="pill">block ${{comparison.block}}</span>
-          <span class="pill">token ${{comparison.position}}</span>
-          <span class="pill">${{comparison.old}} → ${{comparison.new}}</span>
+          <span class="pill">${{comparison.steps.length}} steps</span>
+          <span class="pill">real records ${{comparison.real_records}}</span>
+          <span class="pill">window records ${{comparison.window_records}}</span>
+          ${{strictMeta}}
         </div>
         <p class="prompt">${{comparison.prompt}}</p>
-        <div class="comparison-grid">
+        <div class="player">
+          <div class="player-status">
+            <p class="step-title" data-step-title></p>
+            <div class="controls">
+              <button type="button" class="control-button secondary" data-prev-step>Back</button>
+              <button type="button" class="control-button" data-next-step>Next step</button>
+            </div>
+          </div>
+          <div class="comparison-player-grid">
           <div class="path-panel">
-            <h3>Window-only / no hard remask</h3>
-            <p class="mini-label">same pre-remask window</p>
-            <div class="mini-window">${{comparison.before}}</div>
-            <p class="mini-label">would remask suppressed</p>
-            <div class="mini-window">${{comparison.window_after}}</div>
+              <h3 data-window-title></h3>
+              <div class="viewport" aria-live="polite" data-panel-label="window-only">
+                <p class="focus-line" data-window-focus></p>
+              </div>
           </div>
           <div class="path-panel">
-            <h3>Real remask</h3>
-            <p class="mini-label">same pre-remask window</p>
-            <div class="mini-window">${{comparison.before}}</div>
-            <p class="mini-label">mask then refill</p>
-            <div class="mini-window">${{comparison.real_masked}}</div>
-            <p class="mini-label">after hard remask</p>
-            <div class="mini-window">${{comparison.real_after}}</div>
+              <h3 data-real-title></h3>
+              <div class="viewport" aria-live="polite" data-panel-label="real remask">
+                <p class="focus-line" data-real-focus></p>
+              </div>
+            </div>
           </div>
+          <div class="dots" data-dots aria-hidden="true"></div>
         </div>
-        <p class="note">This case is strictly aligned: same prompt, same block, same window-before tokens, same candidate positions, and same selected remask position. Only the real-remask path applies the mask/refill.</p>
+        <p class="note">Left = window-only run with hard remask suppressed. Right = real remask run. The player advances both paths with the same step index.</p>
       `;
+      caseRoot.appendChild(card);
+      card.querySelector("[data-prev-step]").addEventListener("click", () => {{
+        states.set(comparison.id, Math.max(0, (states.get(comparison.id) ?? 0) - 1));
+        renderComparisonStep(card, comparison);
+      }});
+      card.querySelector("[data-next-step]").addEventListener("click", () => {{
+        const index = states.get(comparison.id) ?? 0;
+        states.set(comparison.id, index === comparison.steps.length - 1 ? 0 : index + 1);
+        renderComparisonStep(card, comparison);
+      }});
+      card.querySelector("[data-dots]").addEventListener("click", (event) => {{
+        if (!event.target.matches(".dot")) return;
+        states.set(comparison.id, Number(event.target.dataset.index));
+        renderComparisonStep(card, comparison);
+      }});
+      renderComparisonStep(card, comparison);
     }} else {{
-      comparisonRoot.innerHTML = `<p class="note">Path comparison case is not available yet.</p>`;
+      const card = document.createElement("article");
+      card.className = "card";
+      card.innerHTML = `<p class="note">Path comparison case is not available yet.</p>`;
+      caseRoot.appendChild(card);
     }}
   </script>
 </body>
@@ -1170,7 +1513,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
     cases = load_cases()
     records_by_prompt = load_records_by_prompt(cases)
-    comparison_payload = build_path_comparison(tokenizer)
+    comparison_payload = build_path_comparison_steps(tokenizer)
 
     payloads = []
     for case in cases:
