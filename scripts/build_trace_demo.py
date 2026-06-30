@@ -33,7 +33,12 @@ SELECTED_CASES = [
     "math-500_444",  # x -> y
 ]
 
-PATH_COMPARISON_CASE = "math-500_10"
+PAIRED_EFFECTIVE_CASES = [
+    "math-500_10",   # 2200 -> 2220, rescued to correct
+    "math-500_33",   # 8-1 -> 7-1, rescued to correct
+    "math-500_249",  # modular inverse path, rescued to correct
+    "math-500_444",  # x -> y geometry line, rescued to correct
+]
 
 SYNTHETIC_CHANGED_REMASKS_PER_CASE = 4
 MAX_DISPLAYED_REMASKS_PER_CASE = 20
@@ -541,9 +546,33 @@ def render_path_panel_step(
     )
 
 
-def build_path_comparison_steps(tokenizer):
-    real_records = load_event_records_for_abbr(EVENT_TRACE, PATH_COMPARISON_CASE)
-    window_records = load_event_records_for_abbr(WINDOW_ONLY_EVENT_TRACE, PATH_COMPARISON_CASE)
+def load_result_maps():
+    real_result_path = (
+        REPO_ROOT
+        / "outputs/math500_grpo90861_ckpt450_850_950_rt050_bs16_8gpu_20260614_160254/checkpoint-450/rt0_50/20260615_085443/results/checkpoint-450-gap-b4-thr0_95-rt0_50-t0_00-rs0_00-ri2-rw3-rstk192-pg192-tg1/math-500.json"
+    )
+    window_result_path = (
+        REPO_ROOT
+        / "outputs/math500_ckpt450_rt050_window_only_nohard_start192_bs16_dev2_20260630_210844/20260630_210902/results/checkpoint-450-gap-b4-thr0_95-rt0_50-t0_00-rs0_00-ri2-rw3-rstk192-pg192-tg1/math-500.json"
+    )
+
+    def read_result(path):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {
+            item["example_abbr"]: {
+                "correct": bool(item["correct"][0]),
+                "pred": item["pred"][0],
+                "answer": item["answer"][0],
+            }
+            for item in payload["details"]
+        }
+
+    return read_result(real_result_path), read_result(window_result_path)
+
+
+def build_path_comparison_steps(tokenizer, target_abbr, result_maps=None):
+    real_records = load_event_records_for_abbr(EVENT_TRACE, target_abbr)
+    window_records = load_event_records_for_abbr(WINDOW_ONLY_EVENT_TRACE, target_abbr)
     if not real_records or not window_records:
         return None
 
@@ -762,11 +791,21 @@ def build_path_comparison_steps(tokenizer):
             "best_window": strict_window_record.get("best_score") if strict_window_record else None,
         }
 
+    real_results, window_results = result_maps or load_result_maps()
+    real_result = real_results.get(target_abbr, {})
+    window_result = window_results.get(target_abbr, {})
+
     return {
-        "id": PATH_COMPARISON_CASE,
+        "id": target_abbr,
+        "mode": "paired",
         "prompt": prompt[:360] + ("..." if len(prompt) > 360 else ""),
         "steps": steps,
         "strict_change": strict_change,
+        "real_correct": real_result.get("correct"),
+        "window_correct": window_result.get("correct"),
+        "real_pred": real_result.get("pred"),
+        "window_pred": window_result.get("pred"),
+        "answer": real_result.get("answer") or window_result.get("answer"),
         "real_records": len(real_records),
         "window_records": len(window_records),
     }
@@ -985,7 +1024,6 @@ def short_prompt(case):
 
 def build_html(case_payloads, comparison_payload):
     data_json = json.dumps(case_payloads, ensure_ascii=False)
-    comparison_json = json.dumps(comparison_payload, ensure_ascii=False)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1299,7 +1337,6 @@ def build_html(case_payloads, comparison_payload):
   </main>
   <script>
     const cases = {data_json};
-    const comparison = {comparison_json};
     const tabs = document.querySelector("[data-tabs]");
     const caseRoot = document.querySelector("[data-cases]");
     const states = new Map();
@@ -1379,15 +1416,25 @@ def build_html(case_payloads, comparison_payload):
       tabs.appendChild(tab);
 
       const card = document.createElement("article");
-      card.className = "card case-card";
+      card.className = "card case-card comparison-card";
       card.dataset.caseId = caseData.id;
+      const strict = caseData.strict_change;
+      const strictMeta = strict
+        ? `
+          <span class="pill">block ${{strict.block}}</span>
+          <span class="pill">token ${{strict.position}}</span>
+          <span class="pill">${{strict.old}} → ${{strict.new}}</span>
+        `
+        : `<span class="pill">non-strict aligned</span>`;
       card.innerHTML = `
         <div class="meta">
+          <span class="pill">effective remask fix</span>
           <span class="pill">${{caseData.id}}</span>
-          <span class="pill">${{caseData.correct ? "correct" : "incorrect"}}</span>
-          <span class="pill">${{caseData.change}}</span>
-          <span class="pill">block ${{caseData.block}}</span>
           <span class="pill">${{caseData.steps.length}} steps</span>
+          <span class="pill">window ${{caseData.window_correct ? "correct" : "wrong"}}</span>
+          <span class="pill">real ${{caseData.real_correct ? "correct" : "wrong"}}</span>
+          ${{strictMeta}}
+          <span class="pill">answer ${{caseData.answer}}</span>
         </div>
         <p class="prompt">${{caseData.prompt}}</p>
         <div class="player">
@@ -1398,79 +1445,14 @@ def build_html(case_payloads, comparison_payload):
               <button type="button" class="control-button" data-next-step>Next step</button>
             </div>
           </div>
-          <div class="viewport" aria-live="polite">
-            <p class="focus-line" data-focus-line></p>
-          </div>
-          <div class="dots" data-dots aria-hidden="true"></div>
-        </div>
-        <p class="note">Black frame = current decode or remask token. Yellow = remask window. Red strike = removed token; green = refill token, kept in later steps.</p>
-      `;
-      caseRoot.appendChild(card);
-
-      card.querySelector("[data-prev-step]").addEventListener("click", () => {{
-        states.set(caseData.id, Math.max(0, (states.get(caseData.id) ?? 0) - 1));
-        renderStep(card, caseData);
-      }});
-      card.querySelector("[data-next-step]").addEventListener("click", () => {{
-        const index = states.get(caseData.id) ?? 0;
-        states.set(caseData.id, index === caseData.steps.length - 1 ? 0 : index + 1);
-        renderStep(card, caseData);
-      }});
-      card.querySelector("[data-dots]").addEventListener("click", (event) => {{
-        if (!event.target.matches(".dot")) return;
-        states.set(caseData.id, Number(event.target.dataset.index));
-        renderStep(card, caseData);
-      }});
-      renderStep(card, caseData);
-
-      if (caseIndex === 0) activateCase(caseData.id);
-    }});
-
-    if (comparison) {{
-      states.set(comparison.id, 0);
-
-      const tab = makeButton(comparison.id, "tab");
-      tab.dataset.caseId = comparison.id;
-      tab.addEventListener("click", () => activateCase(comparison.id));
-      tabs.appendChild(tab);
-
-      const card = document.createElement("article");
-      card.className = "card case-card comparison-card";
-      card.dataset.caseId = comparison.id;
-      const strict = comparison.strict_change;
-      const strictMeta = strict
-        ? `
-          <span class="pill">block ${{strict.block}}</span>
-          <span class="pill">token ${{strict.position}}</span>
-          <span class="pill">${{strict.old}} → ${{strict.new}}</span>
-        `
-        : "";
-      card.innerHTML = `
-        <div class="meta">
-          <span class="pill">synced path comparison</span>
-          <span class="pill">${{comparison.id}}</span>
-          <span class="pill">${{comparison.steps.length}} steps</span>
-          <span class="pill">real records ${{comparison.real_records}}</span>
-          <span class="pill">window records ${{comparison.window_records}}</span>
-          ${{strictMeta}}
-        </div>
-        <p class="prompt">${{comparison.prompt}}</p>
-        <div class="player">
-          <div class="player-status">
-            <p class="step-title" data-step-title></p>
-            <div class="controls">
-              <button type="button" class="control-button secondary" data-prev-step>Back</button>
-              <button type="button" class="control-button" data-next-step>Next step</button>
-            </div>
-          </div>
           <div class="comparison-player-grid">
-          <div class="path-panel">
+            <div class="path-panel">
               <h3 data-window-title></h3>
               <div class="viewport" aria-live="polite" data-panel-label="window-only">
                 <p class="focus-line" data-window-focus></p>
               </div>
-          </div>
-          <div class="path-panel">
+            </div>
+            <div class="path-panel">
               <h3 data-real-title></h3>
               <div class="viewport" aria-live="polite" data-panel-label="real remask">
                 <p class="focus-line" data-real-focus></p>
@@ -1479,30 +1461,28 @@ def build_html(case_payloads, comparison_payload):
           </div>
           <div class="dots" data-dots aria-hidden="true"></div>
         </div>
-        <p class="note">Left = window-only run with hard remask suppressed. Right = real remask run. The player advances both paths with the same step index.</p>
+        <p class="note">Left = window-only run with hard remask suppressed; right = real remask. Window pred: ${{caseData.window_pred}}. Real pred: ${{caseData.real_pred}}.</p>
       `;
       caseRoot.appendChild(card);
+
       card.querySelector("[data-prev-step]").addEventListener("click", () => {{
-        states.set(comparison.id, Math.max(0, (states.get(comparison.id) ?? 0) - 1));
-        renderComparisonStep(card, comparison);
+        states.set(caseData.id, Math.max(0, (states.get(caseData.id) ?? 0) - 1));
+        renderComparisonStep(card, caseData);
       }});
       card.querySelector("[data-next-step]").addEventListener("click", () => {{
-        const index = states.get(comparison.id) ?? 0;
-        states.set(comparison.id, index === comparison.steps.length - 1 ? 0 : index + 1);
-        renderComparisonStep(card, comparison);
+        const index = states.get(caseData.id) ?? 0;
+        states.set(caseData.id, index === caseData.steps.length - 1 ? 0 : index + 1);
+        renderComparisonStep(card, caseData);
       }});
       card.querySelector("[data-dots]").addEventListener("click", (event) => {{
         if (!event.target.matches(".dot")) return;
-        states.set(comparison.id, Number(event.target.dataset.index));
-        renderComparisonStep(card, comparison);
+        states.set(caseData.id, Number(event.target.dataset.index));
+        renderComparisonStep(card, caseData);
       }});
-      renderComparisonStep(card, comparison);
-    }} else {{
-      const card = document.createElement("article");
-      card.className = "card";
-      card.innerHTML = `<p class="note">Path comparison case is not available yet.</p>`;
-      caseRoot.appendChild(card);
-    }}
+      renderComparisonStep(card, caseData);
+
+      if (caseIndex === 0) activateCase(caseData.id);
+    }});
   </script>
 </body>
 </html>
@@ -1511,34 +1491,26 @@ def build_html(case_payloads, comparison_payload):
 
 def main():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
-    cases = load_cases()
-    records_by_prompt = load_records_by_prompt(cases)
-    comparison_payload = build_path_comparison_steps(tokenizer)
+    result_maps = load_result_maps()
 
     payloads = []
-    for case in cases:
-        records = records_by_prompt.get(case["example_abbr"])
-        if not records:
-            raise RuntimeError(f"No event records for {case['example_abbr']}")
-        steps = build_steps(tokenizer, records)
-        payloads.append(
-            {
-                "id": case["example_abbr"],
-                "correct": bool(case["correct"]),
-                "block": case["block_idx"],
-                "change": f"{case['before_span']} → {case['after_span']}",
-                "prompt": short_prompt(case),
-                "steps": steps,
-            }
-        )
+    for abbr in PAIRED_EFFECTIVE_CASES:
+        payload = build_path_comparison_steps(tokenizer, abbr, result_maps=result_maps)
+        if payload is None:
+            raise RuntimeError(f"No paired path records for {abbr}")
+        if not payload.get("real_correct") or payload.get("window_correct"):
+            raise RuntimeError(f"{abbr} is not an effective correction case: {payload}")
+        payloads.append(payload)
 
-    html_text = build_html(payloads, comparison_payload)
+    html_text = build_html(payloads, None)
     TARGET_HTML.write_text(html_text, encoding="utf-8")
     LOCAL_COPY.write_text(html_text, encoding="utf-8")
     print(f"wrote {TARGET_HTML}")
     print(f"wrote {LOCAL_COPY}")
     for payload in payloads:
-        print(f"{payload['id']}: {len(payload['steps'])} steps")
+        strict = payload.get("strict_change") or {}
+        change = f"{strict.get('old')}->{strict.get('new')}" if strict else "non-strict"
+        print(f"{payload['id']}: {len(payload['steps'])} steps, {change}")
 
 
 if __name__ == "__main__":
