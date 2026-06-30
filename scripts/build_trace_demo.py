@@ -14,6 +14,14 @@ EVENT_TRACE = (
     REPO_ROOT
     / "outputs/math500_grpo90861_ckpt450_850_950_rt050_bs16_8gpu_20260614_160254/checkpoint-450/rt0_50/remask_event_trace.jsonl"
 )
+WINDOW_ONLY_EVENT_TRACE = (
+    REPO_ROOT
+    / "outputs/math500_ckpt450_rt050_window_only_nohard_start192_bs16_dev2_20260630_210844/remask_event_trace.jsonl"
+)
+REAL_PREDICTION_DIR = (
+    REPO_ROOT
+    / "outputs/math500_grpo90861_ckpt450_850_950_rt050_bs16_8gpu_20260614_160254/checkpoint-450/rt0_50/20260615_085443/predictions/checkpoint-450-gap-b4-thr0_95-rt0_50-t0_00-rs0_00-ri2-rw3-rstk192-pg192-tg1"
+)
 VISUAL_CASES = REPO_ROOT / "outputs/remask_visual_cases/math500_ckpt450_rt050/math500_remask_visual_cases.json"
 TARGET_HTML = DEMO_ROOT / "index.html"
 LOCAL_COPY = REPO_ROOT / "outputs/remask_visual_cases/key_sentence_inline_edits.html"
@@ -24,6 +32,8 @@ SELECTED_CASES = [
     "math-500_428",  # 1/3 -> 1/6
     "math-500_444",  # x -> y
 ]
+
+PATH_COMPARISON_CASE = "math-500_10"
 
 SYNTHETIC_CHANGED_REMASKS_PER_CASE = 4
 MAX_DISPLAYED_REMASKS_PER_CASE = 20
@@ -238,6 +248,20 @@ def render_token_stream(
     return "".join(parts)
 
 
+def render_compact_window(tokenizer, token_ids, highlight_index=None, old_new=None):
+    parts = []
+    for idx, token_id in enumerate(token_ids):
+        if idx == highlight_index and old_new is not None:
+            old_id, new_id = old_new
+            rendered = render_inline_edit(tokenizer, (old_id, old_id != new_id, 1), new_id)
+        else:
+            rendered = esc(decode(tokenizer, [token_id]))
+        if idx == highlight_index:
+            rendered = '<span class="decode-block">' + rendered + "</span>"
+        parts.append(rendered)
+    return "".join(parts)
+
+
 def record_local_window(record):
     start = max(0, record["window_token_start"] - record["prompt_length"])
     end = max(start, record["window_token_end"] - record["prompt_length"])
@@ -423,6 +447,125 @@ def load_records_by_prompt(cases):
     }
 
 
+def load_prompt_to_abbr():
+    prompt_to_abbr = {}
+    offset = 0
+    prediction_files = sorted(
+        REAL_PREDICTION_DIR.glob("math-500_*.json"),
+        key=lambda path: int(path.stem.split("_")[-1]),
+    )
+    for prediction_file in prediction_files:
+        payload = json.loads(prediction_file.read_text(encoding="utf-8"))
+        for local_idx, item in payload.items():
+            prompt_to_abbr[prompt_key(item["origin_prompt"])] = f"math-500_{offset + int(local_idx)}"
+        offset += len(payload)
+    return prompt_to_abbr
+
+
+def load_window_only_would_events():
+    events = defaultdict(list)
+    if not WINDOW_ONLY_EVENT_TRACE.is_file():
+        return events
+    with WINDOW_ONLY_EVENT_TRACE.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if not record.get("would_trigger"):
+                continue
+            key = (
+                prompt_key(record.get("input")),
+                record.get("block_idx"),
+                record.get("generated_blocks"),
+                record.get("window_token_start"),
+                record.get("window_token_end"),
+            )
+            events[key].append(record)
+    return events
+
+
+def selected_token_change(record):
+    changes = []
+    for position in record.get("remasked_positions") or []:
+        offset = position - record["window_token_start"]
+        before_ids = record.get("window_before_token_ids") or []
+        after_ids = record.get("window_after_token_ids") or []
+        if 0 <= offset < min(len(before_ids), len(after_ids)) and before_ids[offset] != after_ids[offset]:
+            changes.append((position, offset, before_ids[offset], after_ids[offset]))
+    return changes
+
+
+def build_path_comparison(tokenizer):
+    prompt_to_abbr = load_prompt_to_abbr()
+    window_events = load_window_only_would_events()
+    with EVENT_TRACE.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            real_record = json.loads(line)
+            if not real_record.get("triggered"):
+                continue
+            abbr = prompt_to_abbr.get(prompt_key(real_record.get("input")))
+            if abbr != PATH_COMPARISON_CASE:
+                continue
+            changes = selected_token_change(real_record)
+            if not changes:
+                continue
+            key = (
+                prompt_key(real_record.get("input")),
+                real_record.get("block_idx"),
+                real_record.get("generated_blocks"),
+                real_record.get("window_token_start"),
+                real_record.get("window_token_end"),
+            )
+            for window_record in window_events.get(key, []):
+                if real_record.get("window_before_token_ids") != window_record.get("window_before_token_ids"):
+                    continue
+                if real_record.get("candidate_positions") != window_record.get("candidate_positions"):
+                    continue
+                if real_record.get("remasked_positions") != window_record.get("would_remasked_positions"):
+                    continue
+                position, offset, old_id, new_id = changes[0]
+                prompt = (real_record.get("input") or [{}])[0].get("prompt", "")
+                before_html = render_compact_window(
+                    tokenizer,
+                    real_record.get("window_before_token_ids") or [],
+                    offset,
+                )
+                masked_html = render_compact_window(
+                    tokenizer,
+                    real_record.get("window_with_masks_token_ids") or [],
+                    offset,
+                )
+                real_after_html = render_compact_window(
+                    tokenizer,
+                    real_record.get("window_after_token_ids") or [],
+                    offset,
+                    old_new=(old_id, new_id),
+                )
+                window_after_html = render_compact_window(
+                    tokenizer,
+                    window_record.get("window_after_token_ids") or [],
+                    offset,
+                )
+                return {
+                    "id": abbr,
+                    "prompt": prompt[:360] + ("..." if len(prompt) > 360 else ""),
+                    "block": real_record.get("block_idx"),
+                    "generated_blocks": real_record.get("generated_blocks"),
+                    "position": position,
+                    "old": decode(tokenizer, [old_id]),
+                    "new": decode(tokenizer, [new_id]),
+                    "best_real": real_record.get("best_score"),
+                    "best_window": window_record.get("best_score"),
+                    "before": before_html,
+                    "real_masked": masked_html,
+                    "real_after": real_after_html,
+                    "window_after": window_after_html,
+                }
+    return None
+
+
 def build_steps(tokenizer, records):
     steps = [{"title": "Step 00 / Empty answer", "focus": '<span class="empty-token">0 generated tokens</span>'}]
     prev_after = []
@@ -563,8 +706,9 @@ def short_prompt(case):
     return prompt[:360] + ("..." if len(prompt) > 360 else "")
 
 
-def build_html(case_payloads):
+def build_html(case_payloads, comparison_payload):
     data_json = json.dumps(case_payloads, ensure_ascii=False)
+    comparison_json = json.dumps(comparison_payload, ensure_ascii=False)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -820,6 +964,45 @@ def build_html(case_payloads):
       color: var(--muted);
       font-size: 15px;
     }}
+    .comparison-card {{
+      margin-top: 26px;
+    }}
+    .comparison-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }}
+    .path-panel {{
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.42);
+      padding: 16px;
+    }}
+    .path-panel h3 {{
+      margin: 0 0 10px;
+      font: 700 16px/1.2 ui-sans-serif, system-ui, sans-serif;
+    }}
+    .mini-label {{
+      margin: 12px 0 5px;
+      color: var(--muted);
+      font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }}
+    .mini-window {{
+      border: 2px solid #171717;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.55);
+      padding: 14px;
+      min-height: 86px;
+      font-size: 15px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      overflow: auto;
+    }}
+    @media (max-width: 760px) {{
+      .comparison-grid {{ grid-template-columns: 1fr; }}
+    }}
   </style>
 </head>
 <body>
@@ -828,11 +1011,14 @@ def build_html(case_payloads):
     <p class="subtitle">Parallel examples from real tokenizer-block traces. Pick a sample to inspect decode blocks and remask phases.</p>
     <div class="tabs" data-tabs></div>
     <section data-cases></section>
+    <section class="card comparison-card" data-comparison></section>
   </main>
   <script>
     const cases = {data_json};
+    const comparison = {comparison_json};
     const tabs = document.querySelector("[data-tabs]");
     const caseRoot = document.querySelector("[data-cases]");
+    const comparisonRoot = document.querySelector("[data-comparison]");
     const states = new Map();
 
     function makeButton(text, className = "control-button") {{
@@ -940,6 +1126,40 @@ def build_html(case_payloads):
 
       if (caseIndex === 0) activateCase(caseData.id);
     }});
+
+    if (comparison) {{
+      comparisonRoot.innerHTML = `
+        <div class="meta">
+          <span class="pill">path comparison</span>
+          <span class="pill">${{comparison.id}}</span>
+          <span class="pill">block ${{comparison.block}}</span>
+          <span class="pill">token ${{comparison.position}}</span>
+          <span class="pill">${{comparison.old}} → ${{comparison.new}}</span>
+        </div>
+        <p class="prompt">${{comparison.prompt}}</p>
+        <div class="comparison-grid">
+          <div class="path-panel">
+            <h3>Window-only / no hard remask</h3>
+            <p class="mini-label">same pre-remask window</p>
+            <div class="mini-window">${{comparison.before}}</div>
+            <p class="mini-label">would remask suppressed</p>
+            <div class="mini-window">${{comparison.window_after}}</div>
+          </div>
+          <div class="path-panel">
+            <h3>Real remask</h3>
+            <p class="mini-label">same pre-remask window</p>
+            <div class="mini-window">${{comparison.before}}</div>
+            <p class="mini-label">mask then refill</p>
+            <div class="mini-window">${{comparison.real_masked}}</div>
+            <p class="mini-label">after hard remask</p>
+            <div class="mini-window">${{comparison.real_after}}</div>
+          </div>
+        </div>
+        <p class="note">This case is strictly aligned: same prompt, same block, same window-before tokens, same candidate positions, and same selected remask position. Only the real-remask path applies the mask/refill.</p>
+      `;
+    }} else {{
+      comparisonRoot.innerHTML = `<p class="note">Path comparison case is not available yet.</p>`;
+    }}
   </script>
 </body>
 </html>
@@ -950,6 +1170,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
     cases = load_cases()
     records_by_prompt = load_records_by_prompt(cases)
+    comparison_payload = build_path_comparison(tokenizer)
 
     payloads = []
     for case in cases:
@@ -968,7 +1189,7 @@ def main():
             }
         )
 
-    html_text = build_html(payloads)
+    html_text = build_html(payloads, comparison_payload)
     TARGET_HTML.write_text(html_text, encoding="utf-8")
     LOCAL_COPY.write_text(html_text, encoding="utf-8")
     print(f"wrote {TARGET_HTML}")
